@@ -18,7 +18,37 @@ used as a reference for patches, CMake flags and install layout only.
 **Status: builds and starts.** The image builds on Alpine 3.24.x with Cura
 5.14.0, Uranium 5.14.0, CuraEngine 5.14.0 and pyUvula 1.1.0. The build-time
 import checks pass, `CuraEngine help` reports 5.14.0, and Cura stays running in
-an offscreen Qt session without a traceback.
+an offscreen Qt session without a traceback. The release tarball was also
+extracted into a clean `alpine:3.24.4` container with only the documented `apk`
+dependencies and passed the same checks.
+
+## Download
+
+Users install the prebuilt package from the
+[GitHub releases page](https://github.com/PepperDev/cura-builder/releases).
+Each release publishes:
+
+```text
+cura-<tag>-linux-<arch>.tar.gz
+cura-<tag>-linux-<arch>.tar.gz.sha256
+SOURCES-<tag>.txt
+```
+
+`<arch>` is one of `x86_64`, `x86`, `armv7` or `aarch64`.
+
+Verify the checksum, install the Alpine runtime packages listed in the release
+notes, extract the tarball over `/`, and run `cura`:
+
+```sh
+sha256sum -c cura-<tag>-linux-<arch>.tar.gz.sha256
+sudo tar -xzf cura-<tag>-linux-<arch>.tar.gz -C /
+cura
+```
+
+The tarball is the supported download. It does not include Python, Qt, Mesa,
+X11/Wayland libraries or fonts; those come from Alpine `apk`. See
+[`docs/release-pipeline.md`](docs/release-pipeline.md) for the file list and the
+exact `apk add` command.
 
 ## The blocker
 
@@ -41,10 +71,13 @@ extension and its shared-library dependencies.
 | File | Contents |
 | --- | --- |
 | [`docs/upstream-versions.md`](docs/upstream-versions.md) | Latest upstream releases, Cura component requirements, and unresolved version mappings. |
-| [`docs/dockerfile-design.md`](docs/dockerfile-design.md) | Multi-stage Dockerfile design: stages, packages, build order, exact CMake flags, runtime setup, verification, risks. |
+| [`docs/dockerfile-design.md`](docs/dockerfile-design.md) | Multi-stage Dockerfile implementation: stages, packages, build order, exact CMake flags, runtime setup, verification, risks. |
 | [`docs/libuvula.md`](docs/libuvula.md) | Why `pyUvula` is required, upstream libUvula facts, version pinning, Alpine patches, packaging proposal. |
 | [`docs/reference-apkbuilds.md`](docs/reference-apkbuilds.md) | Reference analysis of the aports APKBUILDs, retained as a patch/flag/install-layout baseline. |
-| [`docs/release-plan.md`](docs/release-plan.md) | GitHub Actions release pipeline, tag scheme, tarball contents, excluded Alpine packages, install instructions and licensing rules. |
+| [`docs/release-pipeline.md`](docs/release-pipeline.md) | GitHub Actions release pipeline, tag scheme, tarball contents, excluded Alpine packages, install instructions and licensing rules. |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Local build, release scripts, patch rules, smoke test and pull-request checklist. |
+| [`SECURITY.md`](SECURITY.md) | Supported versions, private vulnerability reporting, scope and release integrity. |
+| [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) | Contributor Covenant 2.1 and enforcement guidelines. |
 
 Reference sources used for the analysis:
 
@@ -52,7 +85,7 @@ Reference sources used for the analysis:
 - [community/libarcus](https://gitlab.alpinelinux.org/alpine/aports/-/tree/master/community/libarcus), [testing/py3-arcus](https://gitlab.alpinelinux.org/alpine/aports/-/tree/master/testing/py3-arcus), [testing/py3-pynest2d](https://gitlab.alpinelinux.org/alpine/aports/-/tree/master/testing/py3-pynest2d), [testing/fdm-materials](https://gitlab.alpinelinux.org/alpine/aports/-/tree/master/testing/fdm-materials)
 - Upstream source repositories for Cura, Uranium, CuraEngine, libArcus, pyArcus, pynest2d, fdm-materials and libUvula
 
-## Proposed approach
+## Approach
 
 - **Base:** `alpine:latest` (currently Alpine 3.24) for both stages.
 - **Builder:** install `build-base`, CMake, Ninja, Python development headers,
@@ -71,6 +104,9 @@ Reference sources used for the analysis:
 
 ## Releases
 
+Users download the package from the
+[GitHub releases page](https://github.com/PepperDev/cura-builder/releases).
+
 [`.github/workflows/release.yml`](.github/workflows/release.yml) runs daily and
 on demand. It resolves the latest Cura release, its UltiMaker dependency refs,
 the Alpine version and the Alpine package-index hash, then builds and publishes:
@@ -87,19 +123,27 @@ files our build produces (Cura, Uranium, CuraEngine, the compiled Python
 packages, the generated shared libraries, resources and license texts). Python,
 PyQt6/Qt, Mesa, X11/Wayland libraries, fonts and the rest of the Alpine runtime
 are installed by the user with `apk`, not shipped in the tarball. See
-[`docs/release-plan.md`](docs/release-plan.md) for the file list, the exact
+[`docs/release-pipeline.md`](docs/release-pipeline.md) for the file list, the exact
 `apk add` command and the licensing obligations.
 
 ## Scope
 
-- The release pipeline currently targets `linux/amd64` (`x86_64`) only.
-- Future work may add `x86` (i386), `armhf`, `armv7` and `aarch64`. `aarch64`
-  and `armv7` need a native runner or QEMU. `armhf` is currently blocked by
-  upstream packaging metadata (`cura`/`uranium` are `noarch !armhf`) and needs a
-  source-level check.
-- The Dockerfile hardcodes Python 3.14 (`/usr/lib/python3.14/site-packages`),
-  matching Alpine 3.24. Detecting the interpreter's `site-packages` path is
-  planned for a future release.
+- The release workflow publishes four architectures:
+  `linux/amd64` (`x86_64`), `linux/386` (`x86`), `linux/arm/v7` (`armv7`) and
+  `linux/arm64` (`aarch64`).
+- `x86_64` and `x86` run natively: the amd64 kernel executes 32-bit x86
+  binaries directly. `armv7` and `aarch64` are built with QEMU user emulation
+  registered by `tonistiigi/binfmt`; they are slower and are smoke-tested, but
+  only `x86_64` has been verified in a clean Alpine container.
+- `armhf` (`linux/arm/v6`) is deliberately not published. Upstream Cura and
+  Uranium are marked `noarch !armhf`; revisit it after a source-level check.
+- The release tag is computed from the `x86_64` Alpine indexes only. A change
+  limited to another architecture's indexes would not create a new tag; this is
+  an accepted risk.
+- Python's site-packages directory is discovered at build time with
+  `sysconfig.get_path("platlib")` (currently
+  `/usr/lib/python3.14/site-packages` on Alpine 3.24), so a Python minor
+  change does not require editing hardcoded `COPY` paths.
 - The same patches and flags should remain reusable in an APKBUILD so the
   Alpine package can eventually be fixed at the source.
 - Not in scope: AppImage/Flatpak packaging, Windows/macOS, or using prebuilt

@@ -3,7 +3,7 @@
 # Resolve the current release inputs and compute the release tag.
 #
 # Writes KEY=VALUE lines to $VERSIONS_FILE (default: versions.env) and, when
-# running in GitHub Actions, to $GITHUB_OUTPUT. See docs/release-plan.md.
+# running in GitHub Actions, to $GITHUB_OUTPUT. See docs/release-pipeline.md.
 #
 # Requires: bash, curl, git, sha256sum, gh.
 

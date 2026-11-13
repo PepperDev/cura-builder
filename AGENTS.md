@@ -27,7 +27,10 @@ and Cura starts in the runtime image. The release workflow is in
 | `docs/dockerfile-design.md` | Multi-stage design, packages, build order, flags, runtime |
 | `docs/libuvula.md` | Why `pyUvula` is required, upstream facts, Alpine patches |
 | `docs/reference-apkbuilds.md` | aports APKBUILDs retained as a patch/flag/install-layout baseline |
-| `docs/release-plan.md` | Release workflow, tag scheme, tarball contents, excluded Alpine packages, install steps, licensing |
+| `docs/release-pipeline.md` | Release workflow, tag scheme, tarball contents, excluded Alpine packages, install steps, licensing |
+| `CONTRIBUTING.md` | Local build, release scripts, patch rules, smoke test, pull-request checklist |
+| `SECURITY.md` | Supported versions, private vulnerability reporting, scope, release integrity |
+| `CODE_OF_CONDUCT.md` | Contributor Covenant 2.1 and enforcement guidelines |
 | `Dockerfile` | Multi-stage build, all source refs as `--build-arg` with pinned defaults |
 | `patches/` | Per-component patches derived from aports plus the libUvula patch |
 | `.github/workflows/release.yml` | Daily/manual release workflow |
@@ -73,11 +76,25 @@ refs.
   GitHub `releases/latest` tag, or the newest git tag when that is newer
   (`wagyu` 0.5.0 is a tag, while its latest release is 0.2.1). They are included
   in the dependency hash because they are built from source.
-- The pipeline currently builds `linux/amd64` only. Future targets: `x86`,
-  `armhf`, `armv7`, `aarch64`; each needs its own runner and artifact name.
-- Python 3.14 and `/usr/lib/python3.14/site-packages` are hardcoded for now.
-  Detecting the interpreter's site-packages path is planned for a future
-  release.
+- The workflow builds four platforms in parallel:
+  `linux/amd64` (`x86_64`), `linux/386` (`x86`), `linux/arm/v7` (`armv7`) and
+  `linux/arm64` (`aarch64`). `x86_64` and `x86` are native (the amd64 kernel
+  executes 32-bit x86); `armv7` and `aarch64` use QEMU user emulation registered
+  with `docker run --privileged --rm tonistiigi/binfmt:latest --install all` on
+  the disposable runner.
+- `armhf` (`linux/arm/v6`) is intentionally excluded for now. Upstream Cura
+  and Uranium are `noarch !armhf`; revisit after a source-level check.
+- The tag hash uses only the `x86_64` Alpine indexes. A change confined to
+  another architecture's indexes will not produce a new tag; that is accepted.
+- Each architecture has its own artifact name
+  (`cura-<tag>-linux-<arch>.tar.gz`); only `x86_64` has been verified in a
+  clean Alpine container so far.
+- Python's site-packages path is detected with
+  `sysconfig.get_path("platlib")` in the builder and runtime stages. The
+  builder stages the Python packages in `/staging/python`; the runtime copies
+  them into whatever directory its Python reports (currently
+  `/usr/lib/python3.14/site-packages`). Do not reintroduce hardcoded
+  `python3.X` paths.
 - Deleting a release/tag happens only on manual runs and is intentional.
   Multiple release tags may point at the same commit; GitHub supports that and
   each release has its own assets.
@@ -85,7 +102,7 @@ refs.
   actions.
 - The release tarball is allowlisted: only build outputs and license texts. Do
   not replace it with `docker export` of the runtime container.
-- Details: [`docs/release-plan.md`](docs/release-plan.md).
+- Details: [`docs/release-pipeline.md`](docs/release-pipeline.md).
 
 ## The blocker
 
@@ -128,6 +145,8 @@ may use a staging prefix. Apply the aports patches described in
   facts.
 - `docs/reference-apkbuilds.md` records the 5.13.0/5.3.0 aports baseline. Its
   versions are not the target; its patches and install layout are.
+- `README.md`, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md` and the
+  release document must describe the same download location and commands.
 
 ## Verification
 
@@ -146,10 +165,11 @@ Runtime smoke test:
 QT_QPA_PLATFORM=offscreen timeout 30s cura
 ```
 
-A timeout exit code of `124` means Cura stayed alive. Any Python traceback is a
-failure. Cura may ignore `SIGTERM` and keep running; if the command does not
-return, start it in the background, wait 30 seconds, and kill it explicitly. A
-successful compile is not proof that the image runs.
+A timeout exit code of `124` (GNU `timeout`) or `143` (BusyBox `timeout` after
+`SIGTERM`) with no Python traceback means Cura stayed alive. Any Python
+traceback is a failure. Cura may ignore `SIGTERM` and keep running; if the
+command does not return, start it in the background, wait 30 seconds, and kill
+it explicitly. A successful compile is not proof that the image runs.
 
 ## Licensing
 

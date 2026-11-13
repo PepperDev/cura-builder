@@ -217,7 +217,7 @@ range-v3-dev rapidjson-dev samurai spdlog-dev stb
 - `https://github.com/Ultimaker/Scripta_public/archive/<scripta-commit>/Scripta_public-<scripta-commit>.tar.gz`
 - `https://github.com/mapbox/geometry.hpp/archive/refs/tags/v2.0.3/geometry.hpp-2.0.3.tar.gz`
 - `https://github.com/mapbox/wagyu/archive/refs/tags/0.5.0/wagyu-0.5.0.tar.gz`
-- `cmake.patch`, `cmake-helpers.patch`, `32bit-arm.patch`
+- `cmake.patch`, `cmake-helpers.patch`, `32bit-arm.patch`, `32bit-min.patch`
 - `mapbox-wagyuConfig.cmake`, `scriptaConfig.cmake`
 
 ### `prepare()`

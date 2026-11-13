@@ -250,14 +250,18 @@ The `FindClipper.cmake` file can be copied verbatim from
 ### 4.3 Install layout
 
 ```
-/usr/lib/python3.14/site-packages/pyUvula.cpython-314-x86_64-linux-musl.so
+<sitelib>/pyUvula.cpython-314-x86_64-linux-musl.so
 ```
 
-Confirm the exact filename and directory with:
+`<sitelib>` is detected at build time, never hardcoded. Confirm the exact
+filename and directory with:
 
 ```sh
 python3 -c 'import sysconfig; print(sysconfig.get_path("platlib"))'
 ```
+
+On Alpine 3.24 this is `/usr/lib/python3.14/site-packages` and the extension
+tag is `cpython-314-x86_64-linux-musl`.
 
 PyUvula statically links `libuvula.a`, so there is no `libuvula.so` runtime
 dependency. The extension does depend on `libstdc++`, `libgcc`, `libm`, and
@@ -321,7 +325,8 @@ QT_QPA_PLATFORM=offscreen timeout 30 cura
 A successful startup should show no `ModuleNotFoundError` and no traceback.
 Because Cura is a GUI application, a clean offscreen run may still exit with a
 Qt platform error on some images; treat any Python traceback as a failure and
-platform-plugin errors separately. Cura may ignore `SIGTERM`, so if `timeout`
+platform-plugin errors separately. `timeout` returning `124` or `143` with no
+traceback means Cura stayed alive. Cura may ignore `SIGTERM`, so if `timeout`
 does not return, start Cura in the background and kill it after 30 seconds.
 
 ## 7. Open questions

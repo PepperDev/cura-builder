@@ -11,10 +11,11 @@ page records the structure, the build arguments and the reasons behind them.
   Alpine package exists.
 - Produce a runtime image that can actually launch Cura, not merely compile it.
 - Keep the runtime image free of compilers and build headers.
-- Target `linux/amd64` (`x86_64`) for now. The Dockerfile is architecture
-  neutral; future targets are `x86`, `armhf`, `armv7` and `aarch64`, each with
-  its own runner and artifact name. `armhf` needs a source-level check because
-  upstream marks Cura/Uranium `noarch !armhf`.
+- Build `linux/amd64` (`x86_64`) and `linux/386` (`x86`) natively; the amd64
+  kernel runs 32-bit x86 directly. Build `linux/arm/v7` (`armv7`) and
+  `linux/arm64` (`aarch64`) under QEMU user emulation. The Dockerfile is
+  architecture neutral. `armhf` (`linux/arm/v6`) is not built because upstream
+  marks Cura/Uranium `noarch !armhf`; it needs a source-level check first.
 
 Non-goals:
 
@@ -77,7 +78,7 @@ argument per component is enough.
 | `WAGYU_REF` | `0.5.0` | mapbox/wagyu |
 
 The release workflow overrides these with the resolved upstream refs; see
-[`release-plan.md`](release-plan.md). The defaults are the last manually
+[`release-pipeline.md`](release-pipeline.md). The defaults are the last manually
 verified set and are what a plain `docker build .` uses. The workflow resolves
 `ZEUS_REF`, `LEXY_REF`, `GEOMETRY_REF` and `WAGYU_REF` from each project's
 GitHub `releases/latest` tag (or the newest git tag when it is newer), like Cura
@@ -142,11 +143,11 @@ before Cura so Cura's install does not overwrite it.
 | CuraFormulaeEngine | `patches/cura-formulae-engine/cmake.patch`; `-DCURA_FORMULA_VERSION_VERSION`; installs `cura-formulae-engineConfig.cmake` |
 | libArcus | aports patches `cmake-build.patch`, `ArcusConfig.patch`, `protobuf-31.patch`; `-DARCUS_VERSION`; shared library |
 | pyArcus | aports patches plus `pyproject.patch`; SIP 6; installs `pyArcus.so` and `.pyi` |
-| CuraEngine | aports `cmake.patch` + `cmake-helpers.patch`; bundles Scripta, geometry.hpp and wagyu; `-DCURA_ENGINE_VERSION`; plugins/curaviz/sentry off |
+| CuraEngine | aports `cmake.patch` + `cmake-helpers.patch` + our `32bit-min.patch` (32-bit `std::min` type fix); bundles Scripta, geometry.hpp and wagyu; `-DCURA_ENGINE_VERSION`; plugins/curaviz/sentry off |
 | libnest2d | headers copied to `/usr/include/libnest2d` |
 | pynest2d | aports patches plus `FindClipper.cmake`; shared library |
 | libUvula | `patches/libuvula/cmake.patch`; `-DUVULA_VERSION`/`-DPYUVULA_VERSION`; Python bindings on, JS/CLI off; C++20 and PIC. Linked statically into `pyUvula` (the only consumer; a shared library would add a file without reducing size or improving performance) |
-| Uranium | aports `cmake.patch`, `fix-logger-used-but-not-imported.patch`, `qt-try-ints-then-bytes.patch`, `cmake-helpers.patch`; `-DPython_VERSION=3.14`; `MinSizeRel` |
+| Uranium | aports `cmake.patch`, `fix-logger-used-but-not-imported.patch`, `qt-try-ints-then-bytes.patch`, `cmake-helpers.patch`; `-DPython_VERSION=<major.minor from python3>`; `MinSizeRel` |
 | fdm-materials | `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` (upstream CMake minimum is too old for CMake 4) |
 | Cura | aports `AppDesktopData.patch`, `CuraVersion.patch`, `cmake-helpers.patch`, `cmake.patch`; `-DCURA_VERSION`; `cura_app.py` renamed to `cura`; `SliceInfoPlugin` removed; translations moved to `/usr/share/locale` |
 
@@ -168,21 +169,22 @@ lacks. See [`libuvula.md`](libuvula.md).
 | `/usr/share/uranium/` | Uranium resources and CMake modules |
 | `/usr/share/locale/` | Cura translations |
 | `/usr/share/licenses/cura-alpine/` | license texts collected from every source tree, plus this repository's `LICENSE` |
-| `/usr/lib/python3.14/site-packages/UM/` | Uranium Python package |
-| `/usr/lib/python3.14/site-packages/cura/` | Cura Python package |
-| `/usr/lib/python3.14/site-packages/pyArcus.so` | pyArcus (import name `pyArcus`) |
-| `/usr/lib/python3.14/site-packages/pynest2d*` | pynest2d |
-| `/usr/lib/python3.14/site-packages/pyUvula*` | libUvula bindings |
-| `/usr/lib/python3.14/site-packages/stl/`, `numpy_stl*` | numpy-stl |
-| `/usr/lib/python3.14/site-packages/trimesh/` | trimesh |
-| `/usr/lib/python3.14/site-packages/python_utils/`, `typing_extensions.py` | numpy-stl runtime dependencies |
+| `<sitelib>/UM/` | Uranium Python package |
+| `<sitelib>/cura/` | Cura Python package |
+| `<sitelib>/pyArcus.so` | pyArcus (import name `pyArcus`) |
+| `<sitelib>/pynest2d*` | pynest2d |
+| `<sitelib>/pyUvula*` | libUvula bindings |
+| `<sitelib>/stl/`, `numpy_stl*` | numpy-stl |
+| `<sitelib>/trimesh/` | trimesh |
+| `<sitelib>/python_utils/`, `typing_extensions.py` | numpy-stl runtime dependencies |
 
-`<python sitelib>` is hardcoded as `/usr/lib/python3.14/site-packages` in the
-runtime `COPY` lines and in the release export allowlist, because Alpine 3.24
-ships Python 3.14. Detecting the interpreter's site-packages path during the
-build is planned for a future release. Until then, a new Alpine minor with a
-different Python version fails the build at those `COPY` steps, which is the
-intended loud failure.
+`<sitelib>` is not hardcoded. The builder runs
+`python3 -c 'import sysconfig; print(sysconfig.get_path("platlib"))'`, copies the
+Python packages into `/staging/python`, and the runtime stage runs the same
+query and copies them into the detected directory. On Alpine 3.24 that is
+`/usr/lib/python3.14/site-packages`. A new Alpine minor with a different Python
+therefore needs no `COPY` path changes; the runtime import check verifies the
+ABI match.
 
 ## 8. Runtime stage
 
@@ -226,10 +228,11 @@ docker run --rm -e QT_QPA_PLATFORM=offscreen --entrypoint timeout \
   cura-alpine 30s cura
 ```
 
-Exit code `124` means Cura stayed alive for 30 seconds. A Python traceback is a
-failure. Cura may ignore `SIGTERM` and keep running; if the command does not
-return, start it in the background, wait 30 seconds, and kill it explicitly. A
-successful compile is not proof that the image runs.
+Exit code `124` (GNU `timeout`) or `143` (BusyBox `timeout` after `SIGTERM`)
+with no Python traceback means Cura stayed alive for 30 seconds. Any Python
+traceback is a failure. Cura may ignore `SIGTERM` and keep running; if the
+command does not return, start it in the background, wait 30 seconds, and kill
+it explicitly. A successful compile is not proof that the image runs.
 
 ## 10. Risks and open questions
 
@@ -241,5 +244,6 @@ successful compile is not proof that the image runs.
 | musl libc | Native extensions may assume glibc | Build everything from source against musl |
 | `cura-binary-data` absent | Some firmware/precompiled resources missing | Documented limitation; add only if a feature needs it |
 | armhf unsupported | Build fails or produces a broken image | Not built now; needs a source-level check (upstream metadata marks Cura/Uranium `noarch !armhf`) |
+| QEMU builds are slow or time out | An emulated matrix job exceeds the runner limit | `fail-fast: false`, 360-minute job timeout; native `aarch64` runners remain the fallback |
 | Large image | Cura resources are ~137 MB before compression | Slim runtime stage; release tarball excludes Alpine packages |
-| New Alpine minor changes Python/Qt | Hardcoded `python3.14` paths break | Build fails at `COPY`; update Dockerfile and tarball paths |
+| New Alpine minor changes Python/Qt | Detected paths avoid `COPY` churn, but a Python minor change still changes the C-extension ABI | Runtime import check fails loudly; rebuild and smoke-test |

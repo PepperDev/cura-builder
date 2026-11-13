@@ -4,7 +4,7 @@ The image builds the latest upstream releases from source. This page records the
 versions observed during implementation and the mapping rules. The Dockerfile
 keeps these as `--build-arg` defaults; the release workflow re-resolves them
 from the Cura/Uranium/CuraEngine `conandata.yml` files on every run. See
-[`release-plan.md`](release-plan.md).
+[`release-pipeline.md`](release-pipeline.md).
 
 ## Base image
 

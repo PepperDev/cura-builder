@@ -9,7 +9,7 @@
 # Every source ref is a build argument with a pinned default. The release
 # workflow resolves the latest upstream refs and passes them with
 # `--build-arg`; a plain `docker build .` uses the defaults below, which are the
-# last manually verified set. See docs/release-plan.md.
+# last manually verified set. See docs/release-pipeline.md.
 #
 # Build:
 #   docker build -t cura-alpine .
@@ -213,6 +213,7 @@ RUN set -eux; \
     cd CuraEngine; \
     patch -p1 < /patches/curaengine/cmake.patch; \
     patch -p1 < /patches/curaengine/cmake-helpers.patch; \
+    patch -p1 < /patches/curaengine/32bit-min.patch; \
     mkdir -p bundled/include/mapbox bundled/lib/cmake/mapbox-wagyu \
              bundled/lib/cmake/scripta; \
     cp -r ../wagyu/include/mapbox/. bundled/include/mapbox/; \
@@ -306,6 +307,7 @@ RUN set -eux; \
       "https://github.com/Ultimaker/Uranium/archive/${URANIUM_REF}.tar.gz"; \
     tar -xzf Uranium.tar.gz -C Uranium --strip-components=1; \
     cd Uranium; \
+    py_version=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'); \
     for p in cmake.patch fix-logger-used-but-not-imported.patch \
              qt-try-ints-then-bytes.patch cmake-helpers.patch; do \
         patch -p1 < "/patches/uranium/$p"; \
@@ -314,7 +316,7 @@ RUN set -eux; \
       -DCMAKE_BUILD_TYPE=MinSizeRel \
       -DCMAKE_INSTALL_PREFIX=/usr \
       -DCMAKE_INSTALL_LIBDIR=lib \
-      -DPython_VERSION=3.14 \
+      -DPython_VERSION=${py_version} \
       -DGETTEXT_MSGINIT_EXECUTABLE=msginit \
       -DCURA_BINARY_DATA_DIRECTORY=/usr/share/cura; \
     cmake --build build; \
@@ -347,13 +349,14 @@ RUN set -eux; \
       "https://github.com/Ultimaker/Cura/archive/${CURA_REF}.tar.gz"; \
     tar -xzf Cura.tar.gz -C Cura --strip-components=1; \
     cd Cura; \
+    py_version=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'); \
     for p in AppDesktopData.patch CuraVersion.patch cmake-helpers.patch cmake.patch; do \
         patch -p1 < "/patches/cura/$p"; \
     done; \
     cmake -S . -B build -G Ninja \
       -DCMAKE_BUILD_TYPE=minsizerel \
       -DCURA_VERSION=${CURA_VERSION} \
-      -DPython_VERSION=3.14 \
+      -DPython_VERSION=${py_version} \
       -DURANIUM_DIR=/usr/share/uranium \
       -DCMAKE_INSTALL_PREFIX=/usr \
       -DCMAKE_INSTALL_LIBDIR=lib \
@@ -371,6 +374,19 @@ RUN set -eux; \
 # avoid rebuilding numpy/scipy on musl.
 RUN pip install --no-cache-dir --no-deps --break-system-packages \
       numpy-stl trimesh python-utils typing-extensions
+
+# Stage the Python packages in a version-independent directory. The runtime
+# stage discovers the interpreter's site-packages path (Alpine decides the
+# Python minor) and copies these into it. This avoids hardcoding
+# /usr/lib/python3.X/site-packages in a COPY instruction.
+RUN set -eux; \
+    sitelib=$(python3 -c 'import sysconfig; print(sysconfig.get_path("platlib"))'); \
+    rm -rf /staging/python; \
+    mkdir -p /staging/python; \
+    cp -a "$sitelib"/UM "$sitelib"/cura "$sitelib"/stl "$sitelib"/trimesh \
+          "$sitelib"/python_utils "$sitelib"/typing_extensions.py /staging/python/; \
+    cp -a "$sitelib"/pyArcus.* "$sitelib"/pynest2d* "$sitelib"/pyUvula* \
+          "$sitelib"/numpy_stl* /staging/python/
 
 # Collect the license texts of everything built above. The release tarball
 # ships this tree, and the runtime image keeps it for the same reason.
@@ -429,17 +445,18 @@ COPY --from=builder /usr/share/cura /usr/share/cura
 COPY --from=builder /usr/share/uranium /usr/share/uranium
 COPY --from=builder /usr/share/locale /usr/share/locale
 COPY --from=builder /usr/share/licenses/cura-alpine /usr/share/licenses/cura-alpine
-COPY --from=builder /usr/lib/python3.14/site-packages/UM /usr/lib/python3.14/site-packages/UM
-COPY --from=builder /usr/lib/python3.14/site-packages/cura /usr/lib/python3.14/site-packages/cura
-COPY --from=builder /usr/lib/python3.14/site-packages/pyArcus.so /usr/lib/python3.14/site-packages/pyArcus.so
-COPY --from=builder /usr/lib/python3.14/site-packages/pyArcus.pyi /usr/lib/python3.14/site-packages/pyArcus.pyi
-COPY --from=builder /usr/lib/python3.14/site-packages/pynest2d* /usr/lib/python3.14/site-packages/
-COPY --from=builder /usr/lib/python3.14/site-packages/pyUvula* /usr/lib/python3.14/site-packages/
-COPY --from=builder /usr/lib/python3.14/site-packages/stl /usr/lib/python3.14/site-packages/stl
-COPY --from=builder /usr/lib/python3.14/site-packages/trimesh /usr/lib/python3.14/site-packages/trimesh
-COPY --from=builder /usr/lib/python3.14/site-packages/numpy_stl* /usr/lib/python3.14/site-packages/
-COPY --from=builder /usr/lib/python3.14/site-packages/python_utils /usr/lib/python3.14/site-packages/python_utils
-COPY --from=builder /usr/lib/python3.14/site-packages/typing_extensions.py /usr/lib/python3.14/site-packages/typing_extensions.py
+COPY --from=builder /staging/python /staging/python
+
+# Install the Python packages into whatever site-packages the runtime's Python
+# reports. Alpine owns the Python minor version, so nothing below hardcodes
+# /usr/lib/python3.X.
+RUN set -eux; \
+    sitelib=$(python3 -c 'import sysconfig; print(sysconfig.get_path("platlib"))'); \
+    mkdir -p "$sitelib"; \
+    cp -a /staging/python/. "$sitelib/"; \
+    rm -rf /staging; \
+    python3 -c "import pyUvula, UM, cura, pyArcus, pynest2d; print('runtime imports ok')" && \
+    python3 -c "import cura.ApplicationMetadata as m; print('Cura', m.CuraVersion)"
 
 RUN adduser -D -h /home/cura cura && \
     mkdir -p /home/cura/.local/share/cura /home/cura/.config/cura && \

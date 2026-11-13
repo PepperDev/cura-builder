@@ -14,9 +14,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  resolve:
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 15
+    outputs:
+      release_tag: ${{ steps.versions.outputs.RELEASE_TAG }}
+      cura_tag: ${{ steps.versions.outputs.CURA_TAG }}
+      alpine_version: ${{ steps.versions.outputs.ALPINE_VERSION }}
+      exists: ${{ steps.check.outputs.exists }}
     steps:
       - name: Check out
         uses: actions/checkout@v4
@@ -41,18 +46,133 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Upload resolved versions
+        uses: actions/upload-artifact@v4
+        with:
+          name: versions
+          path: versions.env
+          retention-days: 1
+
+  build:
+    needs: resolve
+    if: needs.resolve.outputs.exists != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # armhf / linux/arm/v6 is intentionally absent: upstream Cura and
+          # Uranium are marked `noarch !armhf`. Revisit after a source-level
+          # check.
+          - platform: linux/amd64
+            arch: x86_64
+            qemu: "false"
+          - platform: linux/386
+            arch: x86
+            qemu: "false"
+          - platform: linux/arm/v7
+            arch: armv7
+            qemu: "true"
+          - platform: linux/arm64
+            arch: aarch64
+            qemu: "true"
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Download resolved versions
+        uses: actions/download-artifact@v4
+        with:
+          name: versions
+          path: .
+
+      - name: Install QEMU user emulation
+        if: matrix.qemu == 'true'
+        run: |
+          set -euo pipefail
+          docker pull tonistiigi/binfmt:latest
+          docker run --privileged --rm tonistiigi/binfmt:latest --install all
+          docker run --privileged --rm tonistiigi/binfmt:latest
+          test -e /proc/sys/fs/binfmt_misc/qemu-aarch64
+          test -e /proc/sys/fs/binfmt_misc/qemu-arm
+
+      - name: Set up Buildx
+        if: matrix.platform != 'linux/amd64'
+        run: |
+          set -euo pipefail
+          docker buildx create --name cura-builder --driver docker-container --use
+          docker buildx inspect --bootstrap
+
       - name: Build and package
-        if: github.event_name == 'workflow_dispatch' || steps.check.outputs.exists == 'false'
         env:
-          RELEASE_TAG: ${{ steps.versions.outputs.RELEASE_TAG }}
+          PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
         run: ./scripts/build-release.sh
+
+      - name: Smoke test image
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          container="cura-smoke-${GITHUB_RUN_ID}-${ARCH}"
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          docker run -d --platform "$PLATFORM" --name "$container" \
+            -e QT_QPA_PLATFORM=offscreen "cura-alpine:${RELEASE_TAG}-${ARCH}"
+          # Give emulated builds time to load plugins and reach the event loop.
+          sleep 45
+          docker inspect -f '{{.State.Running}}' "$container" | grep -qx true
+          if docker logs "$container" 2>&1 | grep -q 'Traceback'; then
+            docker logs "$container"
+            exit 1
+          fi
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.arch }}
+          path: |
+            dist/cura-*.tar.gz
+            dist/cura-*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [resolve, build]
+    if: needs.resolve.outputs.exists != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Download resolved versions
+        uses: actions/download-artifact@v4
+        with:
+          name: versions
+          path: .
+
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate release metadata
+        env:
+          ARCHS: x86_64 x86 armv7 aarch64
+        run: ./scripts/release-metadata.sh
 
       - name: Replace existing release
         if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.versions.outputs.RELEASE_TAG }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
         run: |
+          set -euo pipefail
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release delete "$RELEASE_TAG" --yes --cleanup-tag
           fi
@@ -63,16 +183,16 @@ jobs:
           fi
 
       - name: Publish release
-        if: github.event_name == 'workflow_dispatch' || steps.check.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.versions.outputs.RELEASE_TAG }}
-          CURA_TAG: ${{ steps.versions.outputs.CURA_TAG }}
-          ALPINE_VERSION: ${{ steps.versions.outputs.ALPINE_VERSION }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+          CURA_TAG: ${{ needs.resolve.outputs.cura_tag }}
+          ALPINE_VERSION: ${{ needs.resolve.outputs.alpine_version }}
         run: |
+          set -euo pipefail
           gh release create "$RELEASE_TAG" \
-            "dist/cura-${RELEASE_TAG}-linux-x86_64.tar.gz" \
-            "dist/cura-${RELEASE_TAG}-linux-x86_64.tar.gz.sha256" \
+            dist/cura-*.tar.gz \
+            dist/cura-*.tar.gz.sha256 \
             "dist/SOURCES-${RELEASE_TAG}.txt" \
             --title "Cura ${CURA_TAG} on Alpine ${ALPINE_VERSION}" \
             --notes-file dist/release-notes.md

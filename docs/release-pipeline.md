@@ -125,28 +125,72 @@ committed back to the repository.
 
 ## Build
 
-The workflow builds the final stage only, with the resolved arguments:
+The workflow resolves the tag **once**, in the `resolve` job, and uploads the
+resulting `versions.env` as a build artifact. The `build` job then fans out in
+parallel:
 
-```sh
-docker build \
-  --build-arg ALPINE_IMAGE=alpine:<alpine-version> \
-  --build-arg CURA_REF=<cura-tag> \
-  --build-arg CURA_VERSION=<cura-tag> \
-  ... \
-  -t cura-alpine:<tag> .
-```
+| Docker platform | Arch | Emulation | Artifact suffix |
+| --- | --- | --- | --- |
+| `linux/amd64` | `x86_64` | native | `linux-x86_64` |
+| `linux/386` | `x86` | native (32-bit on amd64) | `linux-x86` |
+| `linux/arm/v7` | `armv7` | QEMU | `linux-armv7` |
+| `linux/arm64` | `aarch64` | QEMU | `linux-aarch64` |
 
-`ALPINE_IMAGE` is pinned to `alpine:<version>` from `latest-releases.yaml`, not
-to the floating `alpine:latest` tag. If that image tag is not available yet,
-the build fails rather than silently using a different base.
+`armhf` (`linux/arm/v6`) is deliberately absent: upstream Cura and Uranium are
+marked `noarch !armhf`, so it needs a source-level check before it is added.
+It remains an explicit future target.
+
+Each matrix job:
+
+1. downloads `versions.env`;
+2. for the QEMU rows (`armv7`, `aarch64`), pulls `tonistiigi/binfmt:latest`
+   and registers the emulators:
+   ```sh
+   docker run --privileged --rm tonistiigi/binfmt:latest --install all
+   ```
+   then verifies the `qemu-aarch64` and `qemu-arm` entries under
+   `/proc/sys/fs/binfmt_misc/`;
+3. creates a Buildx container builder with
+   `docker buildx create --driver docker-container`;
+4. runs `PLATFORM=<platform> ARCH=<arch> ./scripts/build-release.sh`, which
+   builds with `docker buildx build --load` for non-amd64 platforms and
+   `docker build` for amd64;
+5. starts the image offscreen, waits 45 seconds and fails on a Python
+   traceback;
+6. uploads `dist/cura-*.tar.gz` and its checksum as `dist-<arch>`.
+
+The builder stage and runtime stage both use `ALPINE_IMAGE=alpine:<version>`,
+pinned from `latest-releases.yaml`, not the floating `alpine:latest` tag. Under
+QEMU the same Dockerfile runs unchanged; `apk` selects the target architecture
+repositories from the platform.
+
+The tag is shared by every architecture. It is computed from the `x86_64`
+APKINDEX only (see above), so an Alpine package change that touches another
+architecture without touching `x86_64` would not produce a new tag. That is an
+accepted risk; the build still uses the current repositories for its target
+architecture.
 
 ## Artifact
+
+Users download the package from the
+[GitHub releases page](https://github.com/PepperDev/cura-builder/releases).
+Each release publishes one tarball per architecture:
 
 ```text
 cura-<tag>-linux-x86_64.tar.gz
 cura-<tag>-linux-x86_64.tar.gz.sha256
+cura-<tag>-linux-x86.tar.gz
+cura-<tag>-linux-x86.tar.gz.sha256
+cura-<tag>-linux-armv7.tar.gz
+cura-<tag>-linux-armv7.tar.gz.sha256
+cura-<tag>-linux-aarch64.tar.gz
+cura-<tag>-linux-aarch64.tar.gz.sha256
 SOURCES-<tag>.txt
 ```
+
+`SOURCES-<tag>.txt` and `release-notes.md` are generated once in the `publish`
+job by `scripts/release-metadata.sh`, after all matrix jobs have uploaded their
+packages.
 
 The tarball contains only files produced by the build:
 
@@ -158,18 +202,22 @@ The tarball contains only files produced by the build:
 | `/usr/lib/uranium/` | Uranium plugins and QML |
 | `/usr/lib/libArcus.so*` | libArcus |
 | `/usr/lib/libcura-formulae-engine.so*` | CuraFormulaeEngine |
-| `/usr/lib/python3.14/site-packages/UM/` | Uranium Python package |
-| `/usr/lib/python3.14/site-packages/cura/` | Cura Python package |
-| `/usr/lib/python3.14/site-packages/pyArcus.so`, `.pyi` | pyArcus |
-| `/usr/lib/python3.14/site-packages/pynest2d*` | pynest2d |
-| `/usr/lib/python3.14/site-packages/pyUvula*` | pyUvula |
-| `/usr/lib/python3.14/site-packages/stl/`, `numpy_stl*` | numpy-stl |
-| `/usr/lib/python3.14/site-packages/trimesh/` | trimesh |
-| `/usr/lib/python3.14/site-packages/python_utils/`, `typing_extensions.py` | numpy-stl runtime deps |
+| `<sitelib>/UM/` | Uranium Python package |
+| `<sitelib>/cura/` | Cura Python package |
+| `<sitelib>/pyArcus.so`, `.pyi` | pyArcus |
+| `<sitelib>/pynest2d*` | pynest2d |
+| `<sitelib>/pyUvula*` | pyUvula |
+| `<sitelib>/stl/`, `numpy_stl*` | numpy-stl |
+| `<sitelib>/trimesh/` | trimesh |
+| `<sitelib>/python_utils/`, `typing_extensions.py` | numpy-stl runtime deps |
 | `/usr/share/cura/` | Cura resources, definitions, materials |
 | `/usr/share/uranium/` | Uranium resources and CMake helpers |
 | `/usr/share/locale/` | Cura translations |
 | `/usr/share/licenses/cura-alpine/` | license texts of everything built |
+
+`<sitelib>` is resolved inside the runtime container with
+`python3 -c 'import sysconfig; print(sysconfig.get_path("platlib"))'`. On Alpine
+3.24 it is `/usr/lib/python3.14/site-packages`.
 
 The export uses `docker create` + `tar` + `docker cp` with that allowlist. It
 must **never** use `docker export` of the whole container: that would include
@@ -205,35 +253,77 @@ apk add python3 py3-qt6 py3-numpy py3-scipy py3-cryptography \
     font-noto font-dejavu
 ```
 
-Then:
+Then, for the artifact matching the machine's architecture:
 
 ```sh
-sudo tar -xzf cura-<tag>-linux-x86_64.tar.gz -C /
+sudo tar -xzf cura-<tag>-linux-<arch>.tar.gz -C /
 cura
 ```
 
-The tarball uses absolute `/usr/...` paths, so extraction requires root.
+`<arch>` is one of `x86_64`, `x86`, `armv7` or `aarch64`. The tarball uses
+absolute `/usr/...` paths, so extraction requires root.
+
+## Verification
+
+The `x86_64` artifact has been extracted into a clean `alpine:3.24.4` container
+with only the `apk` packages listed above. `pyUvula` reports 1.1.0, Cura reports
+5.14.0, `CuraEngine help` reports 5.14.0, and Cura stays alive in an offscreen
+Qt session without a Python traceback.
+
+The `x86` artifact is built natively as a 32-bit binary on the amd64 kernel. The
+built image has been checked in place: `getconf LONG_BIT` reports 32, all Python
+modules import, `CuraEngine help` reports 5.14.0, and Cura starts offscreen. It
+has not been extracted into a separate clean container yet.
+
+The `armv7` and `aarch64` artifacts are built under QEMU and get the same
+in-image smoke test, but they have not been extracted into a clean container on
+real hardware. Treat them as untested until that is done.
+
+Every matrix job repeats the startup check before uploading its package: it
+starts the built image with `QT_QPA_PLATFORM=offscreen`, waits 45 seconds
+(longer for the QEMU builds), requires the container to still be running, and
+fails on a Python traceback in the logs. A missing or failed architecture stops
+the `publish` job, so a release never contains a partial set of tarballs.
 
 ## Platforms
 
-The pipeline currently builds `linux/amd64` (`x86_64`) only. The Dockerfile
-itself is architecture-neutral, but the workflow runs on `ubuntu-latest` and
-names the artifact accordingly.
+The workflow builds four Docker platforms on `ubuntu-latest`:
 
-Future targets, in no particular order: `x86` (i386), `armhf`, `armv7` and
-`aarch64`. `aarch64` and `armv7` need a native runner or QEMU; `armhf` is
-currently blocked by upstream packaging metadata (`cura`/`uranium` are
-`noarch !armhf`) and would need a source-level check. Each architecture must
-produce its own artifact name and its own APKINDEX hash.
+| Platform | Arch | How |
+| --- | --- | --- |
+| `linux/amd64` | `x86_64` | native |
+| `linux/386` | `x86` | native (32-bit on amd64) |
+| `linux/arm/v7` | `armv7` | QEMU user emulation |
+| `linux/arm64` | `aarch64` | QEMU user emulation |
+
+`armhf` (`linux/arm/v6`) is skipped for now. Upstream Cura and Uranium are
+`noarch !armhf`; adding it requires a source-level check first.
+
+QEMU user emulation is registered with `tonistiigi/binfmt` on the disposable
+runner. The registration is kernel-global on that VM, which is acceptable
+because the runner is discarded after the job. Native arm64 GitHub runners are
+an alternative for `aarch64`; the current matrix intentionally uses QEMU so one
+runner label covers every architecture.
+
+Emulated builds are substantially slower than native ones, especially
+CuraEngine and the C++ Python bindings. The build job timeout is 360 minutes and
+`fail-fast` is disabled so one slow or failing architecture does not cancel the
+others.
 
 ## Python version
 
-The Dockerfile and the tarball paths hardcode Python 3.14
-(`/usr/lib/python3.14/site-packages`), because that is what Alpine 3.24 ships.
-A future release should detect the interpreter's `site-packages` path during
-the build and use it for the runtime `COPY` steps and the export allowlist
-instead of hardcoding it. Until then, an Alpine minor that changes Python
-fails the build at those `COPY` steps, which is the intended loud failure.
+The Python version is not hardcoded. The builder computes
+`sysconfig.get_path("platlib")`, installs Uranium/Cura with
+`-DPython_VERSION=<major.minor from python3>`, and stages the Python packages in
+`/staging/python`. The runtime stage computes the same path with its own Python
+and copies the staged packages there. The release export script queries the
+path in the runtime container too, so `<sitelib>` follows whatever Python
+Alpine installs.
+
+On Alpine 3.24 that path is `/usr/lib/python3.14/site-packages`. An Alpine minor
+that changes Python still changes the C-extension ABI, but it no longer needs
+edits to `COPY` lines or the export allowlist; the runtime import check fails
+the build if the artifacts do not match.
 
 ## Licensing requirements
 
@@ -263,9 +353,9 @@ AGPL-3.0-or-later (CuraEngine), and other upstream code. The pipeline must:
 
 ## Limitations and open questions
 
-- A new Alpine minor release can change Python or Qt in a way that breaks the
-  hardcoded `python3.14` paths. The build fails loudly; the Dockerfile and the
-  tarball paths must then be updated (see "Python version").
+- A new Alpine minor release can change Python or Qt. The site-packages path is
+  detected, but the C-extension ABI can change; the runtime import check fails
+  loudly before a release is published.
 - Manual runs delete and recreate an existing release with the same tag. This is
   intentional: it is how a rebuild of the same external version set is
   published. The deletion only happens for manual runs; scheduled runs never
@@ -274,6 +364,13 @@ AGPL-3.0-or-later (CuraEngine), and other upstream code. The pipeline must:
   expected: releases track external resources, not commits in this repository.
   GitHub allows multiple tags and releases on one commit, each with its own
   assets.
-- The first release for a new architecture needs the workflow matrix and
-  artifact naming extended; the current job builds one platform.
+- The tag hash uses only the `x86_64` Alpine package indexes. The other
+  architectures could theoretically change without changing the tag; this is an
+  accepted risk because an index change on only one architecture is unlikely.
+- QEMU builds are slow. The job timeout is 360 minutes and `fail-fast` is off;
+  a very slow architecture can still hit the limit.
+- `armhf` (`linux/arm/v6`) is not published. Upstream Cura/Uranium are
+  `noarch !armhf`; revisit only after a source-level check.
+- The `x86`, `armv7` and `aarch64` packages are not yet manually verified in a
+  clean container on real hardware.
 - Switch `pyUvula` to a shared `libUvula` to simplify LGPL relinking?
