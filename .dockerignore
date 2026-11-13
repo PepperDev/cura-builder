@@ -1,0 +1,9 @@
+.tmp
+.git
+docs
+README.md
+AGENTS.md
+.github
+scripts
+dist
+versions.env

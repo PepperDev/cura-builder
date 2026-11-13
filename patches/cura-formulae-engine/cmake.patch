@@ -1,0 +1,22 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -3,7 +3,6 @@
+ 
+ include(CTest)
+ 
+-find_package(standardprojectsettings REQUIRED)
+ option(ENABLE_TESTS "Build with unit test" ON)
+ option(EXTENSIVE_WARNINGS "Build with all warnings" ON)
+ option(ENABLE_APPS "Build apps example" ON)
+@@ -120,3 +119,11 @@
+ if(WIN32)
+     set_target_properties(cura-formulae-engine PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+ endif()
++
++include(GNUInstallDirs)
++
++install(TARGETS cura-formulae-engine
++    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
++    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
++
++install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})

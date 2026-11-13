@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  schedule:
+    # Daily at 04:17 UTC. Off the hour to avoid scheduler congestion.
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Resolve versions
+        id: versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/resolve-versions.sh
+
+      - name: Check for an existing release
+        id: check
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.versions.outputs.RELEASE_TAG }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release $RELEASE_TAG already exists; nothing to do."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and package
+        if: github.event_name == 'workflow_dispatch' || steps.check.outputs.exists == 'false'
+        env:
+          RELEASE_TAG: ${{ steps.versions.outputs.RELEASE_TAG }}
+        run: ./scripts/build-release.sh
+
+      - name: Replace existing release
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.versions.outputs.RELEASE_TAG }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release delete "$RELEASE_TAG" --yes --cleanup-tag
+          fi
+          # A tag without a release would make `gh release create` fail.
+          if git ls-remote --tags origin "refs/tags/$RELEASE_TAG" | grep -q .; then
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${RELEASE_TAG}" \
+              || echo "tag already removed"
+          fi
+
+      - name: Publish release
+        if: github.event_name == 'workflow_dispatch' || steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.versions.outputs.RELEASE_TAG }}
+          CURA_TAG: ${{ steps.versions.outputs.CURA_TAG }}
+          ALPINE_VERSION: ${{ steps.versions.outputs.ALPINE_VERSION }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            "dist/cura-${RELEASE_TAG}-linux-x86_64.tar.gz" \
+            "dist/cura-${RELEASE_TAG}-linux-x86_64.tar.gz.sha256" \
+            "dist/SOURCES-${RELEASE_TAG}.txt" \
+            --title "Cura ${CURA_TAG} on Alpine ${ALPINE_VERSION}" \
+            --notes-file dist/release-notes.md

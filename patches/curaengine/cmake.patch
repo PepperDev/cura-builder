@@ -1,0 +1,117 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -4,8 +4,7 @@
+ cmake_policy(SET CMP0091 NEW)  # For MSVC flags, will be ignored on non-Windows OS's
+ cmake_minimum_required(VERSION 3.20)
+ project(CuraEngine)
+-find_package(standardprojectsettings REQUIRED)  # imports the cmake module https://github.com/Ultimaker/conan-ultimaker-index/recipes/standardprojectsettings
+-AssureOutOfSourceBuilds()
++list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
+ 
+ option(ENABLE_ARCUS "Enable support for ARCUS" ON)
+ option(ENABLE_TESTING "Build with unit tests" OFF)
+@@ -21,7 +20,7 @@
+ option(ENABLE_CURAVIZ "Build with CuraViz toolbox" OFF)
+ 
+ if (${ENABLE_ARCUS} OR ${ENABLE_PLUGINS} OR ${ENABLE_CURAVIZ})
+-    find_package(protobuf REQUIRED)
++    find_package(Protobuf REQUIRED)
+ endif ()
+ 
+ MESSAGE(STATUS "Building with plugins support: ${ENABLE_PLUGINS}")
+@@ -35,7 +34,7 @@
+ 
+ message(STATUS "Building with Arcus: ${ENABLE_ARCUS}")
+ if (${ENABLE_ARCUS})
+-    find_package(arcus REQUIRED)
++    find_package(Arcus REQUIRED)
+     protobuf_generate_cpp(engine_PB_SRCS engine_PB_HEADERS Cura.proto)
+ endif ()
+ 
+@@ -224,9 +223,7 @@
+ )
+ 
+ add_library(_CuraEngine STATIC ${engine_SRCS} ${engine_PB_SRCS})
+-if (ENABLE_THREADING)
+-    use_threads(_CuraEngine)
+-endif ()
++target_compile_features(_CuraEngine PUBLIC cxx_std_20)
+ 
+ target_include_directories(_CuraEngine
+         PUBLIC
+@@ -253,20 +250,13 @@
+         $<$<CONFIG:Debug>:DEBUG>
+ )
+ 
+-enable_sanitizers(_CuraEngine)
+-
+-if (${EXTENSIVE_WARNINGS})
+-    set_project_warnings(_CuraEngine)
+-endif ()
+-
+ if (ENABLE_ARCUS)
+-    target_link_libraries(_CuraEngine PUBLIC arcus::arcus)
++    target_link_libraries(_CuraEngine PUBLIC Arcus)
+ endif ()
+ 
+ find_package(mapbox-wagyu REQUIRED)
+-find_package(clipper REQUIRED)
++find_package(Clipper REQUIRED)
+ find_package(RapidJSON REQUIRED)
+-find_package(stb REQUIRED)
+ find_package(Boost REQUIRED)
+ find_package(spdlog REQUIRED)
+ find_package(fmt REQUIRED)
+@@ -292,15 +282,13 @@
+         spdlog::spdlog
+         range-v3::range-v3
+         fmt::fmt
+-        clipper::clipper
++        Clipper::Clipper
+         mapbox-wagyu::mapbox-wagyu
+-        rapidjson
+-        stb::stb
+-        boost::boost
++        Boost::boost
+         scripta::scripta
+         PNG::PNG
+         cura-formulae-engine::cura-formulae-engine
+-        $<$<NOT:$<BOOL:${EMSCRIPTEN}>>:onetbb::onetbb>
++        $<$<NOT:$<BOOL:${EMSCRIPTEN}>>:TBB::tbb>
+         $<$<TARGET_EXISTS:semver::semver>:semver::semver>
+         $<$<TARGET_EXISTS:curaengine_grpc_definitions::curaengine_grpc_definitions>:curaengine_grpc_definitions::curaengine_grpc_definitions>
+         $<$<TARGET_EXISTS:curaviz_grpc_definitions::curaviz_grpc_definitions>:curaviz_grpc_definitions::curaviz_grpc_definitions>
+@@ -333,10 +321,6 @@
+     endif ()
+ endif (NOT WIN32)
+ 
+-if (ENABLE_THREADING)
+-    use_threads(CuraEngine)
+-endif ()
+-
+ if (EMSCRIPTEN)
+     message(STATUS "Building for Emscripten")
+     target_link_options(_CuraEngine
+@@ -392,14 +376,14 @@
+             _CuraEngine
+             GTest::gtest
+             GTest::gmock
+-            clipper::clipper
++            Clipper::Clipper
+             mapbox-wagyu::mapbox-wagyu
+             $<$<TARGET_EXISTS:curaengine_grpc_definitions::curaengine_grpc_definitions>:curaengine_grpc_definitions::curaengine_grpc_definitions>
+             $<$<TARGET_EXISTS:asio-grpc::asio-grpc>:asio-grpc::asio-grpc>
+             $<$<TARGET_EXISTS:grpc::grpc>:grpc::grpc>
+             $<$<TARGET_EXISTS:protobuf::libprotobuf>:protobuf::libprotobuf>)
+     if (ENABLE_ARCUS)
+-        target_link_libraries(test_helpers PUBLIC arcus::arcus)
++        target_link_libraries(test_helpers PUBLIC Arcus)
+     endif ()
+ endif ()
+ 
+@@ -414,3 +398,5 @@
+     enable_testing()
+     add_subdirectory(tests)
+ endif ()
++
++install(TARGETS CuraEngine DESTINATION ${CMAKE_INSTALL_BINDIR})
