@@ -19,6 +19,7 @@ jobs:
     timeout-minutes: 15
     outputs:
       release_tag: ${{ steps.versions.outputs.RELEASE_TAG }}
+      build_id: ${{ steps.versions.outputs.BUILD_ID }}
       cura_tag: ${{ steps.versions.outputs.CURA_TAG }}
       alpine_version: ${{ steps.versions.outputs.ALPINE_VERSION }}
       exists: ${{ steps.check.outputs.exists }}
@@ -32,16 +33,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: ./scripts/resolve-versions.sh
 
-      - name: Check for an existing release
+      - name: Check for an existing build
         id: check
         if: github.event_name == 'schedule'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.versions.outputs.RELEASE_TAG }}
+          BUILD_ID: ${{ steps.versions.outputs.BUILD_ID }}
         run: |
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+          set -euo pipefail
+          # The tag carries the run number, so it is always new. Look for the
+          # build id in the published asset names instead.
+          tarball="cura-${BUILD_ID}-linux-x86_64.tar.gz"
+          if gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate \
+               --jq '.[].assets[].name' | grep -qxF "$tarball"; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Release $RELEASE_TAG already exists; nothing to do."
+            echo "A release already contains $tarball; nothing to do."
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
@@ -114,13 +120,13 @@ jobs:
         env:
           PLATFORM: ${{ matrix.platform }}
           ARCH: ${{ matrix.arch }}
-          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+          BUILD_ID: ${{ needs.resolve.outputs.build_id }}
         run: |
           set -euo pipefail
           container="cura-smoke-${GITHUB_RUN_ID}-${ARCH}"
           trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
           docker run -d --platform "$PLATFORM" --name "$container" \
-            -e QT_QPA_PLATFORM=offscreen "cura-alpine:${RELEASE_TAG}-${ARCH}"
+            -e QT_QPA_PLATFORM=offscreen "cura-alpine:${BUILD_ID}-${ARCH}"
           # Give emulated builds time to load plugins and reach the event loop.
           sleep 45
           docker inspect -f '{{.State.Running}}' "$container" | grep -qx true
@@ -186,6 +192,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+          BUILD_ID: ${{ needs.resolve.outputs.build_id }}
           CURA_TAG: ${{ needs.resolve.outputs.cura_tag }}
           ALPINE_VERSION: ${{ needs.resolve.outputs.alpine_version }}
         run: |
@@ -193,6 +200,6 @@ jobs:
           gh release create "$RELEASE_TAG" \
             dist/cura-*.tar.gz \
             dist/cura-*.tar.gz.sha256 \
-            "dist/SOURCES-${RELEASE_TAG}.txt" \
+            "dist/SOURCES-${BUILD_ID}.txt" \
             --title "Cura ${CURA_TAG} on Alpine ${ALPINE_VERSION}" \
             --notes-file dist/release-notes.md

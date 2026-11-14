@@ -128,11 +128,28 @@ path". The Dockerfile therefore installs the `pybind11==3.0.1` pip wheel, which
 ships the CMake config and the headers in the same directory, and passes
 `-Dpybind11_DIR="$(python3 -m pybind11 --cmakedir)"` when configuring libUvula.
 
-Cura 5.14.0's `conandata.yml` also lists `pysavitar/5.12.0` and
-`dulcificum/5.11.0-alpha.0`. Neither is imported by the Cura or Uranium Python
-sources at 5.14.0 (`dulcificum` appears only in the MakerbotWriter's Conan
-metadata lookup), so the image does not build or install them. Re-check this if
-a future Cura release imports them at startup.
+Cura 5.14.0's `conandata.yml` lists `pysavitar/5.12.0` and
+`dulcificum/5.11.0-alpha.0`; the bundled 3MFWriter and MakerbotWriter plugins
+import them at startup. Neither component nor its C++ dependency has a usable
+5.12.0/5.11.0 tag, so the Dockerfile pins the `main` commits that declare those
+versions:
+
+| Component | Repository | Version | Pinned commit |
+| --- | --- | --- | --- |
+| libSavitar | `Ultimaker/libSavitar` | 5.12.0 | `c513049b0866d6903826c9be46dd84deb12ffcba` |
+| pySavitar | `Ultimaker/pySavitar` | 5.12.0 | `74cbe2bd365c6f3397b385e879139b012059c487` |
+| dulcificum | `Ultimaker/synsepalum-dulcificum` | 5.11.0-alpha.0 | `f81c0ea950cdd2f24195620e7eb8fd057b6c194e` |
+
+Dulcificum needs `ctre/3.7.2`, which Alpine 3.24 does not package. The build
+uses tag `v3.7.2` of `hanickadot/compile-time-regular-expressions`; keep it in
+sync with the `ctre` requirement in Dulcificum's `conanfile.py`.
+
+libSavitar and pySavitar ship no install rules or `savitarConfig.cmake`, so the
+build patches add a package config, the shared library and the headers. The
+exported target is `savitar::savitar`, which is what pySavitar links, and the
+config re-finds `pugixml` because the library is linked against it publicly.
+Dulcificum has no license file; its source archive is published in the release
+`SOURCES` file.
 
 ## fdm-materials
 
@@ -143,9 +160,10 @@ an older `v10.9.1-0`; the source tag is the authoritative reference.
 ## Pinning policy
 
 - The Dockerfile defaults pin Cura, Uranium, CuraEngine and fdm-materials to
-  their exact `5.14.0` tags, and libArcus, pyArcus, pynest2d, libnest2d,
-  libUvula, CuraFormulaeEngine and Scripta to the exact commits that satisfy the
-  Conan versions above.
+  their exact `5.14.0` tags, and libArcus, pyArcus, libSavitar, pySavitar,
+  dulcificum, pynest2d, libnest2d, libUvula, CuraFormulaeEngine and Scripta to
+  the exact commits that satisfy the Conan versions above.
+- ctre is pinned to `v3.7.2`, the version Dulcificum's `conanfile.py` requires.
 - zeus_expected, lexy, geometry.hpp and wagyu are resolved from their GitHub
   `releases/latest` tag, or the newest git tag when that is newer. They are
   included in the release dependency hash because the Dockerfile builds them

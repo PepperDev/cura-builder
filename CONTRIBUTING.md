@@ -84,10 +84,15 @@ start Cura offscreen:
 
 ```sh
 docker run --rm --entrypoint /bin/sh cura-alpine -c '
-  python3 -c "import pyUvula, UM, cura, pyArcus, pynest2d; print(pyUvula.__version__)"
+  python3 -c "import pyUvula, UM, cura, pyArcus, pynest2d, pySavitar, pyDulcificum; print(pyUvula.__version__)"
+  python3 -c "from UM.Settings.SettingFunction import SettingFunction as F; q = chr(34); e = q + 'a' + q + ' + ' + q + 'b' + q; assert F(e)(object()) == 'ab'"
   QT_QPA_PLATFORM=offscreen timeout 30s cura
 '
 ```
+
+The setting-formula check guards `patches/uranium/py314-ast.patch`: on Python
+3.14 without it, any formula that contains a string literal returns `None`
+instead of its value.
 
 `timeout` returning `124` (GNU) or `143` (BusyBox after `SIGTERM`) with no
 Python traceback means Cura stayed alive until the timeout. Any traceback is a
@@ -103,8 +108,8 @@ container, waits 45 seconds, verifies it is still running, and fails on any
 - Keep every downloaded component pinned to an exact tag or commit. The
   workflow resolves refs; the Dockerfile defaults must stay buildable.
 - Keep the build order:
-  libArcus → pyArcus → CuraEngine → pynest2d → libUvula/pyUvula → Uranium →
-  fdm-materials → Cura.
+  libArcus → pyArcus → libSavitar → pySavitar → ctre → dulcificum → CuraEngine →
+  pynest2d → libUvula/pyUvula → Uranium → fdm-materials → Cura.
 - Put Alpine adaptations in `patches/<component>/` and apply them in the same
   order as the `Dockerfile`. Prefer a minimal patch over editing the installed
   result.
@@ -117,12 +122,21 @@ container, waits 45 seconds, verifies it is still running, and fails on any
 
 ## Changing the release pipeline
 
-- The tag is
-  `<cura-tag>-<deps-hash>-alpine-<alpine-version>-<apkindex-hash>`.
+- Two strings are derived from the resolved inputs:
+  - the git tag,
+    `<cura-tag>-<run-number>-<deps-hash>-alpine-<alpine-version>-<apkindex-hash>`;
+  - the build id used in artifact names, image tags, `SOURCES-*.txt` and the
+    release title,
+    `<cura-tag>-<deps-hash>-alpine-<alpine-version>-<apkindex-hash>`.
+  The run number (`github.run_number`) belongs to the tag only; never put it in
+  a file name, because the same inputs must keep producing the same artifact
+  names.
 - Everything that is built from source but is not Cura belongs in the
   dependency hash, including `zeus_expected`, `lexy`, `geometry.hpp` and
   `wagyu`. Alpine packages are covered by the APKINDEX hash.
-- Scheduled runs must never delete a release. Only manual runs replace one.
+- Scheduled runs must never delete a release; they skip when a release already
+  has the tarball for the computed build id. Only manual runs replace a release
+  with the same tag.
 - Use `gh` for GitHub API and release operations. Do not add third-party
   release actions.
 - Run the shell syntax check before pushing:

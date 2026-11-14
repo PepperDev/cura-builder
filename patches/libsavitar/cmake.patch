@@ -1,0 +1,66 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,10 +1,12 @@
+ cmake_policy(SET CMP0091 NEW)
+ project(libsavitar)
+ cmake_minimum_required(VERSION 3.20)
+-find_package(standardprojectsettings REQUIRED)
++include(CMakePackageConfigHelpers)
+ 
+ find_package(pugixml REQUIRED)
+ 
++set(SAVITAR_VERSION "5.12.0" CACHE STRING "Savitar version")
++
+ set(savitar_SRCS
+         src/Namespace.cpp
+         src/ThreeMFParser.cpp
+@@ -27,7 +29,11 @@
+     add_library(Savitar STATIC ${savitar_SRCS})
+ endif ()
+ 
+-set_project_warnings(Savitar)
++set_target_properties(Savitar PROPERTIES
++        VERSION ${SAVITAR_VERSION}
++        SOVERSION ${SAVITAR_VERSION}
++        EXPORT_NAME savitar
++)
+ 
+ target_link_libraries(Savitar PUBLIC pugixml::pugixml)
+ 
+@@ -44,3 +49,27 @@
+     enable_testing()
+     add_subdirectory(tests)
+ endif ()
++
++configure_package_config_file(savitarConfig.cmake.in ${CMAKE_BINARY_DIR}/savitarConfig.cmake INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/savitar)
++write_basic_package_version_file(${CMAKE_BINARY_DIR}/savitarConfigVersion.cmake VERSION ${SAVITAR_VERSION} COMPATIBILITY SameMajorVersion)
++
++install(FILES
++        ${CMAKE_BINARY_DIR}/savitarConfig.cmake
++        ${CMAKE_BINARY_DIR}/savitarConfigVersion.cmake
++        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/savitar
++)
++
++install(TARGETS Savitar
++        EXPORT savitar-targets
++        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
++        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
++        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
++)
++
++install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
++
++install(EXPORT savitar-targets
++        NAMESPACE savitar::
++        FILE savitarTargets.cmake
++        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/savitar
++)
+--- /dev/null
++++ b/savitarConfig.cmake.in
+@@ -0,0 +1,6 @@
++@PACKAGE_INIT@
++
++include(CMakeFindDependencyMacro)
++find_dependency(pugixml)
++
++include("${CMAKE_CURRENT_LIST_DIR}/savitarTargets.cmake")

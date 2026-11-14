@@ -1,0 +1,26 @@
+diff --git a/UM/Settings/SettingFunction.py b/UM/Settings/SettingFunction.py
+index 194087a..ae68082 100644
+--- a/UM/Settings/SettingFunction.py
++++ b/UM/Settings/SettingFunction.py
+@@ -257,9 +257,7 @@ class _SettingExpressionVisitor(ast.NodeVisitor):
+             self.keys.add(node.s)  # type: ignore
+ 
+     def visit_Subscript(self, node: ast.Subscript):
+-        if type(node.value) == ast.Str:
+-            raise IllegalMethodError("Indexing on strings is not allowed")
+-        if type(node.value) == getattr(ast, "Constant", None) and isinstance(getattr(node.value, "value", None), str):
++        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+             raise IllegalMethodError("Indexing on strings is not allowed")
+         for child_node in ast.iter_child_nodes(node):
+             self.visit(child_node)
+@@ -274,8 +272,8 @@ class _SettingExpressionVisitor(ast.NodeVisitor):
+ 
+         if node.value in self._blacklist:
+             raise IllegalMethodError(node.value)
+-        if node.s.startswith("_"):
+-            raise IllegalMethodError(node.s)
++        if node.value.startswith("_"):
++            raise IllegalMethodError(node.value)
+         if node.value not in self._knownNames and node.value not in dir(builtins):  # type: ignore #AST uses getattr stuff, so ignore type of node.value.
+             self.keys.add(node.value)  # type: ignore
+ 

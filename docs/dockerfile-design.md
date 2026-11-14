@@ -93,6 +93,7 @@ py3-sip py3-qt6
 gettext gettext-dev
 boost-dev clipper-dev libpng-dev onetbb-dev protobuf-dev
 range-v3-dev rapidjson-dev spdlog-dev fmt-dev stb
+nlohmann-json pugixml-dev
 nlopt-dev
 qt6-qtbase-dev qt6-qtdeclarative-dev qt6-qtsvg-dev
 qt6-qt5compat-dev qt6-qtimageformats-dev
@@ -110,8 +111,9 @@ Notes:
 - `clipper-dev` installs `clipper.hpp` and `libpolyclipping` but no CMake config.
   CuraEngine's aports patch provides `FindClipper.cmake`; libUvula and pynest2d
   reuse it.
-- Alpine 3.24 does not package `libnest2d`, `zeus_expected`, `lexy` or
-  `cura-formulae-engine`; they are built from source.
+- Alpine 3.24 does not package `libnest2d`, `zeus_expected`, `lexy`,
+  `cura-formulae-engine`, `libSavitar`, `pySavitar`, `dulcificum` or `ctre`;
+  they are built from source.
 
 ## 5. Build order
 
@@ -121,13 +123,18 @@ Notes:
 3. CuraFormulaeEngine 1.2.1   (main c1257dd6, needs zeus_expected + lexy)
 4. libArcus 5.11.1            (main 339c85a1)
 5. pyArcus 5.12.0             (main 72d052a2, needs libArcus)
-6. CuraEngine 5.14.0          (needs libArcus + CuraFormulaeEngine + bundled Scripta)
-7. libnest2d 5.11.0-alpha.0   (main 1c9dc3c0, headers only)
-8. pynest2d 5.11.0-alpha.0    (main 73235af5, needs clipper, libnest2d, boost, nlopt, sip)
-9. libUvula + pyUvula 1.1.0   (main d15219eb, needs spdlog, range-v3, clipper, pybind11)
-10. Uranium 5.14.0            (needs Python; runtime needs pyUvula/pyArcus)
-11. fdm-materials 5.14.0
-12. Cura 5.14.0               (needs Uranium resources at configure time)
+6. libSavitar 5.12.0          (main c513049b, needs pugixml)
+7. pySavitar 5.12.0           (main 74cbe2bd, needs libSavitar + sip)
+8. ctre v3.7.2                (header-only, needed by Dulcificum)
+9. Dulcificum + pyDulcificum 5.11.0-alpha.0
+                              (main f81c0ea9, needs ctre + pybind11)
+10. CuraEngine 5.14.0         (needs libArcus + CuraFormulaeEngine + bundled Scripta)
+11. libnest2d 5.11.0-alpha.0  (main 1c9dc3c0, headers only)
+12. pynest2d 5.11.0-alpha.0   (main 73235af5, needs clipper, libnest2d, boost, nlopt, sip)
+13. libUvula + pyUvula 1.1.0  (main d15219eb, needs spdlog, range-v3, clipper, pybind11)
+14. Uranium 5.14.0            (needs Python; runtime needs pyUvula/pyArcus/pySavitar/pyDulcificum)
+15. fdm-materials 5.14.0
+16. Cura 5.14.0               (needs Uranium resources at configure time)
 ```
 
 Cura is configured with `-DURANIUM_DIR=/usr/share/uranium`, so Uranium is
@@ -143,17 +150,25 @@ before Cura so Cura's install does not overwrite it.
 | CuraFormulaeEngine | `patches/cura-formulae-engine/cmake.patch`; `-DCURA_FORMULA_VERSION_VERSION`; installs `cura-formulae-engineConfig.cmake` |
 | libArcus | aports patches `cmake-build.patch`, `ArcusConfig.patch`, `protobuf-31.patch`; `-DARCUS_VERSION`; shared library |
 | pyArcus | aports patches plus `pyproject.patch`; SIP 6; installs `pyArcus.so` and `.pyi` |
+| libSavitar | `patches/libsavitar/cmake.patch`; `-DSAVITAR_VERSION`; no upstream install rules, so the patch installs the library, headers and a `savitarConfig.cmake` whose exported target is `savitar::savitar` (`EXPORT_NAME savitar`) and which re-finds `pugixml` |
+| pySavitar | `patches/pysavitar/{cmake,cmake-helpers,pyproject}.patch`; SIP 6; links `savitar::savitar`; installs `pySavitar.so` and `.pyi` |
+| ctre | headers copied to `/usr/include` (`ctre.hpp`, `ctre/`, `ctll/`); header-only, no install step |
+| dulcificum | `patches/dulcificum/cmake.patch`; C++20 + PIC; `-DDULCIFICUM_VERSION`/`-DPYDULCIFICUM_VERSION`; pybind11 module installed into site-packages |
 | CuraEngine | aports `cmake.patch` + `cmake-helpers.patch` + our `32bit-min.patch` (32-bit `std::min` type fix); bundles Scripta, geometry.hpp and wagyu; `-DCURA_ENGINE_VERSION`; plugins/curaviz/sentry off |
 | libnest2d | headers copied to `/usr/include/libnest2d` |
 | pynest2d | aports patches plus `FindClipper.cmake`; shared library |
 | libUvula | `patches/libuvula/cmake.patch`; `-DUVULA_VERSION`/`-DPYUVULA_VERSION`; Python bindings on, JS/CLI off; C++20 and PIC. Linked statically into `pyUvula` (the only consumer; a shared library would add a file without reducing size or improving performance) |
-| Uranium | aports `cmake.patch`, `fix-logger-used-but-not-imported.patch`, `qt-try-ints-then-bytes.patch`, `cmake-helpers.patch`; `-DPython_VERSION=<major.minor from python3>`; `MinSizeRel` |
+| Uranium | aports `cmake.patch`, `fix-logger-used-but-not-imported.patch`, `qt-try-ints-then-bytes.patch`, `cmake-helpers.patch`; `py314-ast.patch` for Python 3.14 `ast` compatibility; `-DPython_VERSION=<major.minor from python3>`; `MinSizeRel` |
 | fdm-materials | `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` (upstream CMake minimum is too old for CMake 4) |
-| Cura | aports `AppDesktopData.patch`, `CuraVersion.patch`, `cmake-helpers.patch`, `cmake.patch`; `-DCURA_VERSION`; `cura_app.py` renamed to `cura`; `SliceInfoPlugin` removed; translations moved to `/usr/share/locale` |
+| Cura | aports `AppDesktopData.patch`, `CuraVersion.patch`, `cmake-helpers.patch`, `cmake.patch`; `-DCURA_VERSION`; `CuraVersion.patch` also fills the Conan metadata placeholders with empty dicts (no Conan graph here); `cura_app.py` renamed to `cura`; `SliceInfoPlugin` removed; translations moved to `/usr/share/locale` |
 
 The libUvula patch removes `standardprojectsettings` and its helper calls,
 switches to Alpine's `Clipper::Clipper`, and adds the install rules upstream
-lacks. See [`libuvula.md`](libuvula.md).
+lacks. See [`libuvula.md`](libuvula.md). The libSavitar and pySavitar patches
+serve the same purpose for the Savitar libraries: drop the helper includes,
+then install a shared library, headers, a CMake package config and the SIP
+module. The Dulcificum patch adds the pybind11 install rule and points the
+build at the ctre headers staged in `/usr/include`.
 
 ## 7. Installed layout
 
@@ -165,6 +180,7 @@ lacks. See [`libuvula.md`](libuvula.md).
 | `/usr/lib/uranium/` | Uranium plugins and QML |
 | `/usr/lib/libArcus.so*` | libArcus |
 | `/usr/lib/libcura-formulae-engine.so*` | CuraFormulaeEngine |
+| `/usr/lib/libSavitar.so*` | libSavitar |
 | `/usr/share/cura/` | Cura resources, definitions, QML, materials |
 | `/usr/share/uranium/` | Uranium resources and CMake modules |
 | `/usr/share/locale/` | Cura translations |
@@ -172,6 +188,8 @@ lacks. See [`libuvula.md`](libuvula.md).
 | `<sitelib>/UM/` | Uranium Python package |
 | `<sitelib>/cura/` | Cura Python package |
 | `<sitelib>/pyArcus.so` | pyArcus (import name `pyArcus`) |
+| `<sitelib>/pySavitar*` | pySavitar (import name `pySavitar`) |
+| `<sitelib>/pyDulcificum*` | pyDulcificum (import name `pyDulcificum`) |
 | `<sitelib>/pynest2d*` | pynest2d |
 | `<sitelib>/pyUvula*` | libUvula bindings |
 | `<sitelib>/stl/`, `numpy_stl*` | numpy-stl |
@@ -186,6 +204,12 @@ query and copies them into the detected directory. On Alpine 3.24 that is
 therefore needs no `COPY` path changes; the runtime import check verifies the
 ABI match.
 
+Two optional upstream components are not built: `libCharon`/`pyCharon` (used by
+the `UFPReader` and `UFPWriter` plugins) and `pynavlib` (3Dconnexion input).
+Both plugins degrade gracefully — they log a `WARNING` and register nothing — so
+Cura starts normally without them; slicing, the first-run wizard and the file
+formats listed above are unaffected.
+
 ## 8. Runtime stage
 
 Runtime packages:
@@ -194,7 +218,7 @@ Runtime packages:
 python3 py3-qt6 py3-numpy py3-scipy py3-cryptography
 py3-pyclipper py3-zeroconf py3-pyserial py3-requests py3-keyring
 py3-networkx
-libstdc++ protobuf onetbb libpng clipper nlopt spdlog fmt boost-libs
+libstdc++ protobuf onetbb libpng clipper nlopt spdlog fmt boost-libs pugixml
 qt6-qtbase qt6-qtdeclarative qt6-qtsvg qt6-qt5compat
 qt6-qtimageformats qt6-qttranslations
 mesa-dri-gallium mesa-gl
@@ -204,7 +228,7 @@ font-noto font-dejavu
 
 The shared C++ libraries must be present or the runtime `ldd` check fails:
 `protobuf`, `onetbb`, `libpng`, `clipper`, `nlopt`, `spdlog`, `fmt`,
-`boost-libs`. `libstdc++` is needed by every compiled component.
+`boost-libs`, `pugixml`. `libstdc++` is needed by every compiled component.
 
 The stage creates a non-root `cura` user, sets `HOME`, defaults
 `QT_QPA_PLATFORM=xcb`, forces software rendering with
@@ -216,10 +240,35 @@ Build-time checks in the Dockerfile:
 
 ```sh
 python3 -c "import pyUvula; assert pyUvula.__version__ == '<LIBUVULA_VERSION>'"
-python3 -c "import UM, cura, pyArcus, pynest2d"
+python3 -c "import pyDulcificum; print(pyDulcificum.__version__)"
+python3 -c "import UM, cura, pyArcus, pynest2d, pySavitar, pyDulcificum"
 python3 -c "import cura.ApplicationMetadata as m; print(m.CuraVersion)"
 CuraEngine help | grep -m1 'Cura_SteamEngine version'
 ```
+
+The build additionally evaluates a setting formula containing a string literal
+(`UM.Settings.SettingFunction`) and fails when the result is not `ab`. That
+guards the `py314-ast.patch` fix for the Python 3.14 `ast.Constant.s` removal,
+which otherwise makes every such formula return `None` and breaks the first-run
+wizard.
+
+It also runs:
+
+```sh
+python3 -c "from cura import CuraVersion as v; assert isinstance(v.ConanInstalls, dict) and isinstance(v.PythonInstalls, dict) and isinstance(v.DependenciesDescriptions, dict)"
+```
+
+and, in the runtime stage where the runtime dependencies exist:
+
+```sh
+python3 -c "import sys; sys.path.insert(0, '/usr/lib/cura/plugins'); import MakerbotWriter"
+python3 -c "from cura.UI.OpenSourceDependenciesModel import OpenSourceDependenciesModel"
+```
+
+`patches/cura/CuraVersion.patch` adds those three attributes as empty
+containers; the source build has no Conan install graph to fill them in.
+Without them `MakerbotWriter` raises `ImportError` on import and the Open
+Source Dependencies dialog raises `AttributeError`.
 
 Runtime smoke test:
 

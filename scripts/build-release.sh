@@ -21,16 +21,19 @@ die() { log "error: $*"; exit 1; }
 
 for var in CURA_TAG CURA_VERSION URANIUM_REF CURAENGINE_REF CURAENGINE_VERSION \
            FDM_MATERIALS_REF LIBARCUS_REF LIBARCUS_VERSION PYARCUS_REF \
+           PYSAVITAR_REF PYSAVITAR_VERSION LIBSAVITAR_REF LIBSAVITAR_VERSION \
+           DULCIFICUM_REF DULCIFICUM_VERSION CTRE_REF \
            PYNEST2D_REF LIBNEST2D_REF LIBUVULA_REF LIBUVULA_VERSION \
            CURAFORMULAE_REF CURAFORMULAE_VERSION SCRIPTA_REF ZEUS_REF LEXY_REF \
-           GEOMETRY_REF WAGYU_REF ALPINE_IMAGE RELEASE_TAG; do
+           GEOMETRY_REF WAGYU_REF ALPINE_IMAGE BUILD_ID; do
     [ -n "${!var:-}" ] || die "$var is not set in $VERSIONS_FILE"
 done
 
 command -v docker >/dev/null 2>&1 || die "missing command: docker"
 
-image="cura-alpine:${RELEASE_TAG}-${ARCH}"
-tarball_name="cura-${RELEASE_TAG}-linux-${ARCH}.tar.gz"
+# The build id, not the git tag: artifact names must not contain the run number.
+image="cura-alpine:${BUILD_ID}-${ARCH}"
+tarball_name="cura-${BUILD_ID}-linux-${ARCH}.tar.gz"
 tarball="$DIST_DIR/$tarball_name"
 
 mkdir -p "$DIST_DIR"
@@ -56,6 +59,13 @@ fi
     --build-arg LIBARCUS_REF="$LIBARCUS_REF" \
     --build-arg LIBARCUS_VERSION="$LIBARCUS_VERSION" \
     --build-arg PYARCUS_REF="$PYARCUS_REF" \
+    --build-arg PYSAVITAR_REF="$PYSAVITAR_REF" \
+    --build-arg PYSAVITAR_VERSION="$PYSAVITAR_VERSION" \
+    --build-arg LIBSAVITAR_REF="$LIBSAVITAR_REF" \
+    --build-arg LIBSAVITAR_VERSION="$LIBSAVITAR_VERSION" \
+    --build-arg DULCIFICUM_REF="$DULCIFICUM_REF" \
+    --build-arg DULCIFICUM_VERSION="$DULCIFICUM_VERSION" \
+    --build-arg CTRE_REF="$CTRE_REF" \
     --build-arg PYNEST2D_REF="$PYNEST2D_REF" \
     --build-arg LIBNEST2D_REF="$LIBNEST2D_REF" \
     --build-arg LIBUVULA_REF="$LIBUVULA_REF" \
@@ -116,8 +126,11 @@ list=/tmp/export-list
 for p in $required \
          'usr/lib/libArcus.so*' \
          'usr/lib/libcura-formulae-engine.so*' \
+         'usr/lib/libSavitar.so*' \
          "${sitelib}/pynest2d*" \
          "${sitelib}/pyUvula*" \
+         "${sitelib}/pySavitar*" \
+         "${sitelib}/pyDulcificum*" \
          "${sitelib}/numpy_stl*"; do
     for f in $p; do
         [ -e "$f" ] || continue

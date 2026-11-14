@@ -39,6 +39,13 @@ ARG FDM_MATERIALS_REF=5.14.0
 ARG LIBARCUS_REF=339c85a1abc7554e6c19bd36bbbc4c2d6f9f40b6
 ARG LIBARCUS_VERSION=5.11.1
 ARG PYARCUS_REF=72d052a24b9ecaba8821182cd6e84c04d9b3f3fe
+ARG PYSAVITAR_REF=74cbe2bd365c6f3397b385e879139b012059c487
+ARG PYSAVITAR_VERSION=5.12.0
+ARG LIBSAVITAR_REF=c513049b0866d6903826c9be46dd84deb12ffcba
+ARG LIBSAVITAR_VERSION=5.12.0
+ARG DULCIFICUM_REF=f81c0ea950cdd2f24195620e7eb8fd057b6c194e
+ARG DULCIFICUM_VERSION=5.11.0-alpha.0
+ARG CTRE_REF=v3.7.2
 ARG PYNEST2D_REF=73235af569bd36bb8c60e659f75057bd559426d8
 ARG LIBNEST2D_REF=1c9dc3c05005cadcbc2b49062c3d37b60e962c7f
 ARG LIBUVULA_REF=d15219eb49b7eedb7c2a03ab627e1415c04f79f6
@@ -61,6 +68,7 @@ RUN apk add --no-cache \
     gettext gettext-dev \
     boost-dev clipper-dev libpng-dev onetbb-dev protobuf-dev \
     range-v3-dev rapidjson-dev spdlog-dev fmt-dev stb \
+    nlohmann-json pugixml-dev \
     nlopt-dev \
     qt6-qtbase-dev qt6-qtdeclarative-dev qt6-qtsvg-dev \
     qt6-qt5compat-dev qt6-qtimageformats-dev
@@ -191,6 +199,83 @@ RUN set -eux; \
     cmake --install build
 
 # ---------------------------------------------------------------------------
+# libSavitar / pySavitar (default 5.12.0, commit c513049b / 74cbe2bd)
+#
+# Cura's 3MF writer imports pySavitar. pySavitar needs the Savitar C++ library
+# and a savitarConfig.cmake; upstream only ships the raw sources, so the patch
+# removes Ultimaker's standardprojectsettings helper and adds install rules.
+# ---------------------------------------------------------------------------
+RUN set -eux; \
+    mkdir -p libSavitar; \
+    curl -fsSL -o libSavitar.tar.gz \
+      "https://github.com/Ultimaker/libSavitar/archive/${LIBSAVITAR_REF}.tar.gz"; \
+    tar -xzf libSavitar.tar.gz -C libSavitar --strip-components=1; \
+    cd libSavitar; \
+    patch -p1 < /patches/libsavitar/cmake.patch; \
+    cmake -S . -B build -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/usr \
+      -DCMAKE_INSTALL_LIBDIR=lib \
+      -DCMAKE_INSTALL_INCLUDEDIR=include \
+      -DBUILD_SHARED_LIBS=ON \
+      -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+      -DSAVITAR_VERSION=${LIBSAVITAR_VERSION}; \
+    cmake --build build; \
+    cmake --install build
+
+RUN set -eux; \
+    mkdir -p pySavitar; \
+    curl -fsSL -o pySavitar.tar.gz \
+      "https://github.com/Ultimaker/pySavitar/archive/${PYSAVITAR_REF}.tar.gz"; \
+    tar -xzf pySavitar.tar.gz -C pySavitar --strip-components=1; \
+    cd pySavitar; \
+    for p in cmake.patch cmake-helpers.patch pyproject.patch; do \
+        patch -p1 < "/patches/pysavitar/$p"; \
+    done; \
+    cmake -S . -B build -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/usr \
+      -DCMAKE_INSTALL_INCLUDEDIR=include \
+      -DBUILD_SHARED_LIBS=ON; \
+    cmake --build build; \
+    cmake --install build
+
+# ---------------------------------------------------------------------------
+# Dulcificum / pyDulcificum (default 5.11.0-alpha.0, commit f81c0ea9)
+#
+# Cura's MakerbotWriter imports pyDulcificum. Dulcificum needs the header-only
+# ctre library, which Alpine 3.24 does not package; the pinned tag matches the
+# version declared by Dulcificum's conanfile. The patch drops the standard
+# project helpers and adds an install rule for the pybind11 module.
+# ---------------------------------------------------------------------------
+RUN set -eux; \
+    mkdir -p dulcificum ctre; \
+    curl -fsSL -o dulcificum.tar.gz \
+      "https://github.com/Ultimaker/synsepalum-dulcificum/archive/${DULCIFICUM_REF}.tar.gz"; \
+    curl -fsSL -o ctre.tar.gz \
+      "https://github.com/hanickadot/compile-time-regular-expressions/archive/${CTRE_REF}.tar.gz"; \
+    tar -xzf dulcificum.tar.gz -C dulcificum --strip-components=1; \
+    tar -xzf ctre.tar.gz -C ctre --strip-components=1; \
+    cp -r ctre/include/. /usr/include/; \
+    cd dulcificum; \
+    patch -p1 < /patches/dulcificum/cmake.patch; \
+    cmake -S . -B build -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/usr \
+      -DCMAKE_INSTALL_LIBDIR=lib \
+      -DCMAKE_INSTALL_INCLUDEDIR=include \
+      -Dpybind11_DIR="$(python3 -m pybind11 --cmakedir)" \
+      -DDULCIFICUM_VERSION=${DULCIFICUM_VERSION} \
+      -DPYDULCIFICUM_VERSION=${DULCIFICUM_VERSION} \
+      -DWITH_PYTHON_BINDINGS=ON \
+      -DWITH_JS_BINDINGS=OFF \
+      -DWITH_APPS=OFF \
+      -DENABLE_TESTS=OFF \
+      -DEXTENSIVE_WARNINGS=OFF; \
+    cmake --build build; \
+    cmake --install build
+
+# ---------------------------------------------------------------------------
 # CuraEngine (default 5.14.0) and its bundled Scripta / geometry.hpp / wagyu
 #
 # Scripta has no 1.1.0 tag; `main` (default b96045c) declares 1.1.0-alpha.0 and
@@ -309,7 +394,8 @@ RUN set -eux; \
     cd Uranium; \
     py_version=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'); \
     for p in cmake.patch fix-logger-used-but-not-imported.patch \
-             qt-try-ints-then-bytes.patch cmake-helpers.patch; do \
+             cmake-helpers.patch py314-ast.patch \
+             qt-try-ints-then-bytes.patch; do \
         patch -p1 < "/patches/uranium/$p"; \
     done; \
     cmake -S . -B build -G Ninja \
@@ -386,6 +472,7 @@ RUN set -eux; \
     cp -a "$sitelib"/UM "$sitelib"/cura "$sitelib"/stl "$sitelib"/trimesh \
           "$sitelib"/python_utils "$sitelib"/typing_extensions.py /staging/python/; \
     cp -a "$sitelib"/pyArcus.* "$sitelib"/pynest2d* "$sitelib"/pyUvula* \
+          "$sitelib"/pySavitar* "$sitelib"/pyDulcificum* \
           "$sitelib"/numpy_stl* /staging/python/
 
 # Collect the license texts of everything built above. The release tarball
@@ -395,8 +482,9 @@ RUN set -eux; \
     rm -rf "$L"; \
     mkdir -p "$L"; \
     for d in Cura Uranium CuraEngine fdm_materials libArcus pyArcus pynest2d \
-             libnest2d libUvula cura-formulae-engine Scripta geometry wagyu \
-             zeus lexy; do \
+             libnest2d libUvula libSavitar pySavitar dulcificum \
+             cura-formulae-engine Scripta geometry wagyu \
+             zeus lexy ctre; do \
         mkdir -p "$L/$d"; \
         find "/src/$d" -maxdepth 4 -type f \
             \( -iname 'LICENSE' -o -iname 'LICENSE.*' \
@@ -408,10 +496,16 @@ RUN set -eux; \
     mkdir -p "$L/cura-alpine"; \
     cp /LICENSE "$L/cura-alpine/LICENSE"
 
-# Fail the build if the Python imports that break the Alpine package fail.
+# Fail the build if the Python imports that break the Alpine package fail, or if
+# the Python 3.14 ast change breaks setting formulas that contain strings.
 RUN python3 -c "import pyUvula; assert pyUvula.__version__ == '${LIBUVULA_VERSION}'; print('pyUvula', pyUvula.__version__)" && \
-    python3 -c "import UM, cura, pyArcus, pynest2d; print('imports ok')" && \
+    python3 -c "import json; from UM.Settings.SettingFunction import SettingFunction as F; e = json.dumps('a') + ' + ' + json.dumps('b'); assert F(e)(object()) == 'ab', 'Python 3.14 setting formula evaluation failed'; print('setting formulas ok')" && \
+    python3 -c "import pyDulcificum; print('pyDulcificum', pyDulcificum.__version__)" && \
+    python3 -c "import UM, cura, pyArcus, pynest2d, pySavitar, pyDulcificum; print('imports ok')" && \
     python3 -c "import cura.ApplicationMetadata as m; print('Cura', m.CuraVersion)" && \
+    python3 -c "import sys; from cura import CuraVersion as v; \
+        assert isinstance(v.ConanInstalls, dict) and isinstance(v.PythonInstalls, dict) and isinstance(v.DependenciesDescriptions, dict), 'CuraVersion build metadata missing'; \
+        print('CuraVersion metadata ok')" && \
     CuraEngine help | grep -m1 'Cura_SteamEngine version'
 
 # ---------------------------------------------------------------------------
@@ -429,6 +523,7 @@ RUN apk add --no-cache \
     py3-pyclipper py3-zeroconf py3-pyserial py3-requests py3-keyring \
     py3-networkx \
     libstdc++ protobuf onetbb libpng clipper nlopt spdlog fmt boost-libs \
+    pugixml \
     qt6-qtbase qt6-qtdeclarative qt6-qtsvg qt6-qt5compat \
     qt6-qtimageformats qt6-qttranslations \
     mesa-dri-gallium mesa-gl \
@@ -437,6 +532,7 @@ RUN apk add --no-cache \
 
 COPY --from=builder /usr/lib/libArcus.so* /usr/lib/
 COPY --from=builder /usr/lib/libcura-formulae-engine.so* /usr/lib/
+COPY --from=builder /usr/lib/libSavitar.so* /usr/lib/
 COPY --from=builder /usr/bin/cura /usr/bin/cura
 COPY --from=builder /usr/bin/CuraEngine /usr/bin/CuraEngine
 COPY --from=builder /usr/lib/cura /usr/lib/cura
@@ -455,8 +551,13 @@ RUN set -eux; \
     mkdir -p "$sitelib"; \
     cp -a /staging/python/. "$sitelib/"; \
     rm -rf /staging; \
-    python3 -c "import pyUvula, UM, cura, pyArcus, pynest2d; print('runtime imports ok')" && \
-    python3 -c "import cura.ApplicationMetadata as m; print('Cura', m.CuraVersion)"
+    python3 -c "import pyUvula, UM, cura, pyArcus, pynest2d, pySavitar, pyDulcificum; print('runtime imports ok')" && \
+    python3 -c "import cura.ApplicationMetadata as m; print('Cura', m.CuraVersion)" && \
+    python3 -c "import sys; from cura import CuraVersion as v; \
+        assert isinstance(v.ConanInstalls, dict) and isinstance(v.PythonInstalls, dict) and isinstance(v.DependenciesDescriptions, dict), 'CuraVersion build metadata missing'; \
+        sys.path.insert(0, '/usr/lib/cura/plugins'); import MakerbotWriter; \
+        from cura.UI.OpenSourceDependenciesModel import OpenSourceDependenciesModel; \
+        print('runtime plugin metadata ok')"
 
 RUN adduser -D -h /home/cura cura && \
     mkdir -p /home/cura/.local/share/cura /home/cura/.config/cura && \

@@ -17,23 +17,37 @@ release is intentional. Scheduled runs never delete a release or tag.
 
 | Trigger | Behaviour |
 | --- | --- |
-| `schedule` (daily cron, `17 4 * * *` UTC) | Resolve the current tag. If a release with that tag already exists, stop. Otherwise build and publish. |
-| `workflow_dispatch` (manual) | Resolve the current tag, skip the existence check, build, and replace any existing release/tag with the same name. |
+| `schedule` (daily cron, `17 4 * * *` UTC) | Resolve the current build id. If a published release already contains `cura-<build-id>-linux-x86_64.tar.gz`, stop. Otherwise build and publish. |
+| `workflow_dispatch` (manual) | Resolve the current build id, skip the existence check, build, and replace any existing release/tag with the same name (a re-run of the same workflow run reuses its run number, so the tag can already exist). |
 
 The cron expression is deliberately off the top of the hour to avoid GitHub's
 scheduler congestion.
 
 ## Tag scheme
 
+Two strings are derived from the resolved inputs:
+
 ```text
-<cura-tag>-<deps-hash>-alpine-<alpine-version>-<apkindex-hash>
+release tag:  <cura-tag>-<run-number>-<deps-hash>-alpine-<alpine-version>-<apkindex-hash>
+build id:     <cura-tag>-<deps-hash>-alpine-<alpine-version>-<apkindex-hash>
 ```
 
 Example:
 
 ```text
-5.14.0-1a2b3c4-alpine-3.24.4-9f8e7d6
+tag:       5.14.0-128-1a2b3c4-alpine-3.24.4-9f8e7d6
+build id:  5.14.0-1a2b3c4-alpine-3.24.4-9f8e7d6
 ```
+
+`<run-number>` is `github.run_number`. It exists only in the git tag. The two
+hashes are random, so sorting releases by tag name would otherwise put builds of
+the same Cura version in an arbitrary order; the run number makes that order
+match the order in which the builds ran. Everything else — artifact file names,
+image tags, `SOURCES-*.txt` and the release title — uses the build id, so the
+same external inputs always produce the same file names.
+
+`RUN_NUMBER` can be overridden in the environment (the scripts fall back to
+`GITHUB_RUN_NUMBER` and then to `0`) for local runs.
 
 ### Cura tag
 
@@ -48,11 +62,12 @@ one per line, excluding Cura itself:
 
 ```text
 Uranium, CuraEngine, fdm_materials, pynest2d, libArcus, pyArcus,
+libSavitar, pySavitar, dulcificum, ctre,
 libnest2d, libUvula, CuraFormulaeEngine, Scripta,
 zeus_expected, lexy, geometry.hpp, wagyu
 ```
 
-The last four are not UltiMaker projects, but the Dockerfile downloads and
+The last five are not UltiMaker projects, but the Dockerfile downloads and
 builds them from source, so their refs are part of the hash. Dependencies that
 come from Alpine repositories (`python3`, PyQt6/Qt, protobuf, boost, clipper,
 nlopt, spdlog, fmt, oneTBB, ...) are covered by the APKINDEX hash below; their
@@ -84,8 +99,8 @@ The repository hash is the first seven hex characters of the SHA-256 of the two
 ) | sha256sum | cut -c1-7
 ```
 
-This makes the tag change when Alpine publishes updated packages, even if the
-Alpine version string stays the same.
+This makes the build id change when Alpine publishes updated packages, even if
+the Alpine version string stays the same.
 
 ## Dependency resolution
 
@@ -95,12 +110,14 @@ all. Instead:
 
 1. Read the Cura `conandata.yml` at the Cura tag. It declares the required
    versions (`uranium/5.14.0`, `curaengine/5.14.0`, `fdm_materials/5.14.0`,
-   `pynest2d/5.11.0-alpha.0`, ...).
+   `pynest2d/5.11.0-alpha.0`, `pysavitar/5.12.0`, `dulcificum/5.11.0-alpha.0`,
+   ...).
 2. For each dependency, use the exact version as a git tag if
    `refs/tags/<version>` exists. Otherwise use the head commit of `main`
    (falling back to `master`).
 3. Read the Uranium and CuraEngine `conandata.yml` files to obtain the pyArcus,
-   libUvula, libArcus and Scripta requirements.
+   libUvula, libArcus and Scripta requirements, and pySavitar's own file for
+   libSavitar.
 4. Warn when a resolved `main` commit declares a different version from the one
    the parent component requires.
 
@@ -110,6 +127,9 @@ Current consequences of that rule:
 | --- | --- |
 | Cura, Uranium, CuraEngine, fdm_materials | release tag (`5.14.0`) |
 | libArcus, pyArcus, pynest2d, libnest2d, libUvula, CuraFormulaeEngine | `main` commit (no matching tag) |
+| libSavitar, pySavitar | `main` commit (public tags stop at 5.3.0) |
+| dulcificum | `main` commit (no 5.11.0-alpha.0 tag) |
+| ctre | tag `v3.7.2` (version required by Dulcificum) |
 | Scripta | `main` commit (no 1.1.0 tag) |
 | zeus_expected, lexy, geometry.hpp, wagyu | latest GitHub release tag; the newest git tag wins when it is newer |
 
@@ -125,7 +145,7 @@ committed back to the repository.
 
 ## Build
 
-The workflow resolves the tag **once**, in the `resolve` job, and uploads the
+The workflow resolves the versions once, in the `resolve` job, and uploads the
 resulting `versions.env` as a build artifact. The `build` job then fans out in
 parallel:
 
@@ -164,10 +184,10 @@ pinned from `latest-releases.yaml`, not the floating `alpine:latest` tag. Under
 QEMU the same Dockerfile runs unchanged; `apk` selects the target architecture
 repositories from the platform.
 
-The tag is shared by every architecture. It is computed from the `x86_64`
+The build id is shared by every architecture. It is computed from the `x86_64`
 APKINDEX only (see above), so an Alpine package change that touches another
-architecture without touching `x86_64` would not produce a new tag. That is an
-accepted risk; the build still uses the current repositories for its target
+architecture without touching `x86_64` would not produce a new build id. That is
+an accepted risk; the build still uses the current repositories for its target
 architecture.
 
 ## Artifact
@@ -177,20 +197,20 @@ Users download the package from the
 Each release publishes one tarball per architecture:
 
 ```text
-cura-<tag>-linux-x86_64.tar.gz
-cura-<tag>-linux-x86_64.tar.gz.sha256
-cura-<tag>-linux-x86.tar.gz
-cura-<tag>-linux-x86.tar.gz.sha256
-cura-<tag>-linux-armv7.tar.gz
-cura-<tag>-linux-armv7.tar.gz.sha256
-cura-<tag>-linux-aarch64.tar.gz
-cura-<tag>-linux-aarch64.tar.gz.sha256
-SOURCES-<tag>.txt
+cura-<build-id>-linux-x86_64.tar.gz
+cura-<build-id>-linux-x86_64.tar.gz.sha256
+cura-<build-id>-linux-x86.tar.gz
+cura-<build-id>-linux-x86.tar.gz.sha256
+cura-<build-id>-linux-armv7.tar.gz
+cura-<build-id>-linux-armv7.tar.gz.sha256
+cura-<build-id>-linux-aarch64.tar.gz
+cura-<build-id>-linux-aarch64.tar.gz.sha256
+SOURCES-<build-id>.txt
 ```
 
-`SOURCES-<tag>.txt` and `release-notes.md` are generated once in the `publish`
-job by `scripts/release-metadata.sh`, after all matrix jobs have uploaded their
-packages.
+`SOURCES-<build-id>.txt` and `release-notes.md` are generated once in the
+`publish` job by `scripts/release-metadata.sh`, after all matrix jobs have
+uploaded their packages.
 
 The tarball contains only files produced by the build:
 
@@ -202,9 +222,12 @@ The tarball contains only files produced by the build:
 | `/usr/lib/uranium/` | Uranium plugins and QML |
 | `/usr/lib/libArcus.so*` | libArcus |
 | `/usr/lib/libcura-formulae-engine.so*` | CuraFormulaeEngine |
+| `/usr/lib/libSavitar.so*` | libSavitar |
 | `<sitelib>/UM/` | Uranium Python package |
 | `<sitelib>/cura/` | Cura Python package |
 | `<sitelib>/pyArcus.so`, `.pyi` | pyArcus |
+| `<sitelib>/pySavitar*` | pySavitar |
+| `<sitelib>/pyDulcificum*` | pyDulcificum |
 | `<sitelib>/pynest2d*` | pynest2d |
 | `<sitelib>/pyUvula*` | pyUvula |
 | `<sitelib>/stl/`, `numpy_stl*` | numpy-stl |
@@ -256,7 +279,7 @@ apk add python3 py3-qt6 py3-numpy py3-scipy py3-cryptography \
 Then, for the artifact matching the machine's architecture:
 
 ```sh
-sudo tar -xzf cura-<tag>-linux-<arch>.tar.gz -C /
+sudo tar -xzf cura-<build-id>-linux-<arch>.tar.gz -C /
 cura
 ```
 
@@ -328,12 +351,15 @@ the build if the artifacts do not match.
 ## Licensing requirements
 
 The repository's MIT license covers only the build files. The tarball
-redistributes LGPL-3.0-or-later (Cura, Uranium, libArcus, pynest2d, libUvula),
-AGPL-3.0-or-later (CuraEngine), and other upstream code. The pipeline must:
+redistributes LGPL-3.0-or-later (Cura, Uranium, libArcus, pySavitar, libSavitar,
+pynest2d, libUvula), AGPL-3.0-or-later (CuraEngine), Apache-2.0 (ctre), and
+other upstream code. Dulcificum's repository declares no license, so the exact
+source archive is published and its license status is stated in the release
+notes. The pipeline must:
 
 - ship `/usr/share/licenses/cura-alpine/`, populated by the Dockerfile from
   every built source tree, plus this repository's `LICENSE`;
-- attach `SOURCES-<tag>.txt` with the exact tags/commits and upstream URLs, and
+- attach `SOURCES-<build-id>.txt` with the exact tags/commits and upstream URLs, and
   point at the repository tag for the patches used;
 - satisfy the AGPL for CuraEngine by providing its complete corresponding
   source;
@@ -342,7 +368,7 @@ AGPL-3.0-or-later (CuraEngine), and other upstream code. The pipeline must:
   `libUvula.so` would add a separate file and a dynamic-link dependency without
   reducing the total tarball size or improving runtime performance measurably.
   Relinking is supported by publishing the exact libUvula source ref in
-  `SOURCES-<tag>.txt` and the patches in this repository. If a shared library is
+  `SOURCES-<build-id>.txt` and the patches in this repository. If a shared library is
   wanted later, build `libUvula` with `BUILD_SHARED_LIBS=ON`, install it, and
   add it to the export allowlist;
 - note that Cura runs with GPL-licensed PyQt6 installed by the user. The Cura
@@ -356,17 +382,22 @@ AGPL-3.0-or-later (CuraEngine), and other upstream code. The pipeline must:
 - A new Alpine minor release can change Python or Qt. The site-packages path is
   detected, but the C-extension ABI can change; the runtime import check fails
   loudly before a release is published.
-- Manual runs delete and recreate an existing release with the same tag. This is
-  intentional: it is how a rebuild of the same external version set is
-  published. The deletion only happens for manual runs; scheduled runs never
-  delete anything.
+- Manual runs delete and recreate an existing release with the same tag. With
+  the run number in the tag that only matches when the same workflow run is
+  re-run, which is exactly when a stale release has to be replaced. The deletion
+  only happens for manual runs; scheduled runs never delete anything.
+- Releases of the same Cura version accumulate one per run, because the tag
+  carries the run number. The dependency and APKINDEX hashes still identify
+  whether the inputs changed, and the scheduled run skips when a release for the
+  computed build id already exists.
 - Several release tags can point at the same repository commit. That is
   expected: releases track external resources, not commits in this repository.
   GitHub allows multiple tags and releases on one commit, each with its own
   assets.
-- The tag hash uses only the `x86_64` Alpine package indexes. The other
-  architectures could theoretically change without changing the tag; this is an
-  accepted risk because an index change on only one architecture is unlikely.
+- The build-id hash uses only the `x86_64` Alpine package indexes. The other
+  architectures could theoretically change without changing the build id; this
+  is an accepted risk because an index change on only one architecture is
+  unlikely.
 - QEMU builds are slow. The job timeout is 360 minutes and `fail-fast` is off;
   a very slow architecture can still hit the limit.
 - `armhf` (`linux/arm/v6`) is not published. Upstream Cura/Uranium are

@@ -1,0 +1,65 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,7 +1,10 @@
+ cmake_minimum_required(VERSION 3.23)
+ project(dulcificum)
+ 
+-find_package(standardprojectsettings REQUIRED)
++set(CMAKE_CXX_STANDARD 20)
++set(CMAKE_CXX_STANDARD_REQUIRED ON)
++set(CMAKE_POSITION_INDEPENDENT_CODE ON)
++
+ option(EXTENSIVE_WARNINGS "Build with all warnings" ON)
+ option(ENABLE_TESTS "Build with unit test" ON)
+ option(WITH_APPS "Build with apps" ON)
+@@ -27,7 +30,8 @@
+ find_package(nlohmann_json REQUIRED)
+ find_package(spdlog REQUIRED)
+ find_package(range-v3 REQUIRED)
+-find_package(ctre REQUIRED)
++find_package(Threads REQUIRED)
++find_path(CTRE_INCLUDE_DIR ctre.hpp REQUIRED)
+ 
+ # --- Setup the shared C++ mgjtp library ---
+ set(DULCIFICUM_SRC
+@@ -50,14 +54,15 @@
+ target_link_libraries(dulcificum
+         PUBLIC
+         nlohmann_json::nlohmann_json
+-        ctre::ctre
+         range-v3::range-v3
+-        spdlog::spdlog)
++        spdlog::spdlog
++        Threads::Threads)
+ 
+ target_include_directories(dulcificum
+         PUBLIC
+         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
++        $<BUILD_INTERFACE:${CTRE_INCLUDE_DIR}>
+ )
+ 
+ target_compile_definitions(dulcificum
+@@ -65,15 +70,6 @@
+     DULCIFICUM_VERSION="${DULCIFICUM_VERSION}"
+     DULCIFICUM_HASH="${GIT_COMMIT_HASH}"
+ )
+-
+-if (NOT WITH_JS_BINDINGS)
+-    use_threads(dulcificum)
+-endif ()
+-
+-enable_sanitizers(dulcificum)
+-if (${EXTENSIVE_WARNINGS})
+-    set_project_warnings(dulcificum)
+-endif ()
+ 
+ # --- Setup JavaScript bindings ---
+ if (WITH_JS_BINDINGS)
+--- a/pyDulcificum/CMakeLists.txt
++++ b/pyDulcificum/CMakeLists.txt
+@@ -8,3 +8,4 @@
+ if(NOT MSVC AND NOT ${CMAKE_BUILD_TYPE} MATCHES Debug|RelWithDebInfo)
+     pybind11_strip(pyDulcificum)
+ endif()
++install(TARGETS pyDulcificum LIBRARY DESTINATION ${Python_SITEARCH} RUNTIME DESTINATION ${Python_SITEARCH})

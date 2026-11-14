@@ -48,13 +48,17 @@ install layout. Link to it; do not vendor a checkout into this repository.
   Uranium 5.14.0, CuraEngine 5.14.0, fdm-materials 5.14.0,
   pynest2d 5.11.0-alpha.0, pysavitar 5.12.0, dulcificum 5.11.0-alpha.0.
 - Uranium 5.14.0 requires `pyarcus/5.12.0` and `uvula/1.1.0`.
+- pySavitar 5.12.0 requires `savitar/5.12.0`; dulcificum requires
+  `ctre/3.7.2`, which Alpine 3.24 does not package.
 - CuraEngine 5.14.0 requires `arcus/5.11.1`, Scripta `>=1.1.0` and
   `cura-formulae-engine/1.2.1`, which pulls in `zeus_expected` and `lexy`.
-- Public GitHub tags for libArcus, pyArcus and pynest2d stop at 5.3.0. Their
-  `main` branches declare exactly the Conan versions above, so the Dockerfile
-  pins these commits: libArcus `339c85a1`, pyArcus `72d052a2`, pynest2d
-  `73235af5`. See [`docs/upstream-versions.md`](docs/upstream-versions.md).
-  Never silently fall back to the 5.3.0 tags.
+- Public GitHub tags for libArcus, pyArcus, pynest2d, libSavitar and pySavitar
+  stop at 5.3.0. Their `main` branches declare exactly the Conan versions above,
+  so the Dockerfile pins these commits: libArcus `339c85a1`, pyArcus
+  `72d052a2`, pynest2d `73235af5`, libSavitar `c513049b`, pySavitar `74cbe2bd`.
+  Dulcificum has no matching tag either; it is pinned to `f81c0ea9`. See
+  [`docs/upstream-versions.md`](docs/upstream-versions.md). Never silently fall
+  back to the 5.3.0 tags.
 
 Never commit floating `latest` source refs. Every downloaded component must be
 pinned to an exact tag, commit SHA, or recorded version from `conandata.yml`.
@@ -65,15 +69,25 @@ refs.
 ## Release workflow
 
 - Triggers: daily cron (`17 4 * * *` UTC) and `workflow_dispatch`.
-- Scheduled runs stop when the computed release tag already exists. Manual runs
-  always build and replace an existing release with the same tag.
-- Tag: `<cura-tag>-<deps-hash>-alpine-<alpine-version>-<apkindex-hash>`, for
-  example `5.14.0-1a2b3c4-alpine-3.24.4-9f8e7d6`. Both hashes are the first
-  seven hex characters of a SHA-256.
+- Two name strings are computed per run:
+  - **release tag** (git tag only):
+    `<cura-tag>-<run-number>-<deps-hash>-alpine-<alpine-version>-<apkindex-hash>`,
+    for example `5.14.0-128-1a2b3c4-alpine-3.24.4-9f8e7d6`;
+  - **build id** (artifact names, image tags, `SOURCES-*.txt`, release title):
+    `<cura-tag>-<deps-hash>-alpine-<alpine-version>-<apkindex-hash>`, for example
+    `5.14.0-1a2b3c4-alpine-3.24.4-9f8e7d6`.
+  Both hashes are the first seven hex characters of a SHA-256. The run number
+  (`github.run_number`) exists so successive builds of the same Cura version
+  sort in run order; the hashes are random and cannot.
+- Scheduled runs stop when a published release already contains
+  `cura-<build-id>-linux-x86_64.tar.gz`. Manual runs skip that check, build, and
+  replace an existing release with the same tag (which happens when a workflow
+  run is re-run, since the run number is reused).
 - Dependency refs come from the Cura/Uranium/CuraEngine `conandata.yml` files:
   use the exact tag when it exists, otherwise the head of `main`/`master`.
-  `zeus_expected`, `lexy`, `geometry.hpp` and `wagyu` are resolved from their
-  GitHub `releases/latest` tag, or the newest git tag when that is newer
+  pySavitar's `conandata.yml` gives libSavitar; `ctre` is the fixed `v3.7.2`
+  tag. `zeus_expected`, `lexy`, `geometry.hpp` and `wagyu` are resolved from
+  their GitHub `releases/latest` tag, or the newest git tag when that is newer
   (`wagyu` 0.5.0 is a tag, while its latest release is 0.2.1). They are included
   in the dependency hash because they are built from source.
 - The workflow builds four platforms in parallel:
@@ -84,10 +98,11 @@ refs.
   the disposable runner.
 - `armhf` (`linux/arm/v6`) is intentionally excluded for now. Upstream Cura
   and Uranium are `noarch !armhf`; revisit after a source-level check.
-- The tag hash uses only the `x86_64` Alpine indexes. A change confined to
-  another architecture's indexes will not produce a new tag; that is accepted.
+- The build-id hash uses only the `x86_64` Alpine indexes. A change confined to
+  another architecture's indexes will not produce a new build id; that is
+  accepted.
 - Each architecture has its own artifact name
-  (`cura-<tag>-linux-<arch>.tar.gz`); only `x86_64` has been verified in a
+  (`cura-<build-id>-linux-<arch>.tar.gz`); only `x86_64` has been verified in a
   clean Alpine container so far.
 - Python's site-packages path is detected with
   `sysconfig.get_path("platlib")` in the builder and runtime stages. The
@@ -120,11 +135,30 @@ Required Alpine adaptations are in `docs/libuvula.md`: remove
 `standardprojectsettings` and its helper calls, use `FindClipper.cmake` with
 `Clipper::Clipper`, and add install rules for the `pyUvula` extension.
 
+## The Python 3.14 setting-formula bug
+
+Alpine 3.24 ships Python 3.14, which removed `ast.Str` and the
+`ast.Constant.s` alias. Uranium 5.14.0 `UM/Settings/SettingFunction.py` still
+reads `node.s`, so every setting formula containing a string literal raises
+`Exception in function ('Constant' object has no attribute 's')` and evaluates
+to `None`. `support_extruder_nr` is one of them, and SolidView's
+`int(...getExtruderPositionValueWithDefault("support_extruder_nr"))` then
+crashes the first-run wizard with `TypeError: int() argument must be ... not
+'NoneType'`. `patches/uranium/py314-ast.patch` uses `node.value` and replaces
+the removed `ast.Str` check in `visit_Subscript`. Keep it applied while Uranium
+still uses `ast.Constant.s`.
+
+`pySavitar` and `pyDulcificum` are imported by Cura's bundled 3MFWriter and
+MakerbotWriter plugins; the build must produce both or the plugins fail to
+load.
+
 ## Build order
 
 ```text
 zeus_expected -> lexy -> CuraFormulaeEngine
 libArcus -> pyArcus
+libSavitar -> pySavitar
+ctre -> dulcificum
 libnest2d -> pynest2d
 CuraEngine (needs libArcus + CuraFormulaeEngine + bundled Scripta)
 libUvula/pyUvula -> Uranium -> fdm-materials -> Cura
@@ -154,10 +188,23 @@ Build-time checks:
 
 ```sh
 python3 -c "import pyUvula; print(pyUvula.__version__)"
-python3 -c "import UM, cura; print('ok')"
+python3 -c "import UM, cura, pyArcus, pynest2d, pySavitar, pyDulcificum; print('ok')"
 python3 -c "import cura.ApplicationMetadata as m; print(m.CuraVersion)"
 CuraEngine help | grep -m1 'Cura_SteamEngine version'
 ```
+
+The build also evaluates a setting formula that contains a string literal
+(`UM.Settings.SettingFunction("'a' + 'b'")`) and fails if the result is not
+`ab`. Python 3.14 removed the `ast.Constant.s` alias, and without
+`patches/uranium/py314-ast.patch` every such formula silently returns `None`,
+which crashed the first-run wizard.
+
+It also checks that `cura.CuraVersion` provides `ConanInstalls`,
+`PythonInstalls` and `DependenciesDescriptions`, and the runtime stage imports
+`MakerbotWriter` and `OpenSourceDependenciesModel` to prove it.
+`patches/cura/CuraVersion.patch` adds those (empty) because the source build has
+no Conan install graph; without them the Makerbot writer plugin fails to import
+and the Open Source Dependencies dialog raises `AttributeError`.
 
 Runtime smoke test:
 

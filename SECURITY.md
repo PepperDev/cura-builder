@@ -44,10 +44,11 @@ In scope:
 
 Out of scope for this repository:
 
-- vulnerabilities in Cura, Uranium, CuraEngine, libArcus, pyArcus, pynest2d,
-  libUvula, Qt, Python or Alpine packages. Report those to the upstream
-  project. If this build pins a vulnerable version, a report here is still
-  useful so the pin can be updated, but the fix belongs upstream.
+- vulnerabilities in Cura, Uranium, CuraEngine, libArcus, pyArcus, libSavitar,
+  pySavitar, dulcificum, pynest2d, libUvula, Qt, Python or Alpine packages.
+  Report those to the upstream project. If this build pins a vulnerable
+  version, a report here is still useful so the pin can be updated, but the fix
+  belongs upstream.
 - issues that require a modified local build, a compromised Docker daemon, or
   running the image as root.
 - the documented licensing and trademark status of the unofficial build.

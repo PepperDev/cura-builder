@@ -96,7 +96,13 @@ mv "$pkgdir/usr/share/cura/resources/i18n/"* "$pkgdir/usr/share/locale/"
   `cura_app.py` launcher into `bin`, desktop/icon/appdata/mime files, and
   includes `CuraPluginInstall.cmake`.
 - `CuraVersion.patch` — adds `cura/CuraVersion.py.in` (app name, display name,
-  version, build type, debug mode, cloud roots).
+  version, full version, build type, debug mode, cloud roots, latest URL).
+  Upstream renders this file from `CuraVersion.py.jinja` in `conanfile.py`,
+  which also fills `ConanInstalls`, `PythonInstalls` and
+  `DependenciesDescriptions` from the Conan graph. There is no Conan graph in
+  this build, so the patch sets those three to empty dicts; without them
+  `MakerbotWriter` fails to import (`ConanInstalls`) and the Open Source
+  Dependencies dialog raises `AttributeError` (`DependenciesDescriptions`).
 - `AppDesktopData.patch` — adds `com.ultimaker.cura.desktop.in`
   (`Exec=@CMAKE_INSTALL_FULL_BINDIR@/cura`, `Icon=cura-icon`,
   `StartupWMClass=cura.real`) and the AppStream metadata.
@@ -141,6 +147,8 @@ Docker build if the docs target is not run.
 - `fix-logger-used-but-not-imported.patch`
 - `qt-try-ints-then-bytes.patch`
 - `cmake-helpers.patch`
+- (not in aports) our `py314-ast.patch` for Python 3.14, where `ast.Str` and
+  `ast.Constant.s` were removed
 
 ### Configure flags
 

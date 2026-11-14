@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Generate the architecture-independent release metadata from versions.env:
-# SOURCES-<tag>.txt and release-notes.md. Run after the matrix builds have
+# SOURCES-<build-id>.txt and release-notes.md. Run after the matrix builds have
 # placed their tarballs and checksums in $DIST_DIR.
 #
 # See docs/release-pipeline.md.
@@ -20,10 +20,12 @@ die() { log "error: $*"; exit 1; }
 . "$VERSIONS_FILE"
 
 for var in CURA_TAG URANIUM_REF CURAENGINE_REF FDM_MATERIALS_REF LIBARCUS_REF \
-           PYARCUS_REF PYNEST2D_REF LIBNEST2D_REF LIBUVULA_REF LIBUVULA_VERSION \
-           LIBARCUS_VERSION CURAFORMULAE_REF CURAFORMULAE_VERSION SCRIPTA_REF \
+           PYARCUS_REF PYSAVITAR_REF LIBSAVITAR_REF DULCIFICUM_REF CTRE_REF \
+           PYNEST2D_REF LIBNEST2D_REF LIBUVULA_REF LIBUVULA_VERSION \
+           LIBARCUS_VERSION PYSAVITAR_VERSION LIBSAVITAR_VERSION DULCIFICUM_VERSION \
+           CURAFORMULAE_REF CURAFORMULAE_VERSION SCRIPTA_REF \
            ZEUS_REF LEXY_REF GEOMETRY_REF WAGYU_REF ALPINE_VERSION ALPINE_BRANCH \
-           APKINDEX_HASH RELEASE_TAG; do
+           APKINDEX_HASH RELEASE_TAG BUILD_ID; do
     [ -n "${!var:-}" ] || die "$var is not set in $VERSIONS_FILE"
 done
 
@@ -41,13 +43,13 @@ platform_for() {
 mkdir -p "$DIST_DIR"
 
 for arch in $ARCHS; do
-    [ -f "$DIST_DIR/cura-${RELEASE_TAG}-linux-${arch}.tar.gz" ] \
+    [ -f "$DIST_DIR/cura-${BUILD_ID}-linux-${arch}.tar.gz" ] \
         || die "missing tarball for $arch"
-    [ -f "$DIST_DIR/cura-${RELEASE_TAG}-linux-${arch}.tar.gz.sha256" ] \
+    [ -f "$DIST_DIR/cura-${BUILD_ID}-linux-${arch}.tar.gz.sha256" ] \
         || die "missing checksum for $arch"
 done
 
-sources="$DIST_DIR/SOURCES-${RELEASE_TAG}.txt"
+sources="$DIST_DIR/SOURCES-${BUILD_ID}.txt"
 {
     printf 'Cura %s build inputs\n' "$CURA_TAG"
     printf 'Generated: %s\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -59,6 +61,10 @@ sources="$DIST_DIR/SOURCES-${RELEASE_TAG}.txt"
     printf '%-24s %-44s %s\n' "fdm_materials" "$FDM_MATERIALS_REF" "https://github.com/Ultimaker/fdm_materials/archive/${FDM_MATERIALS_REF}.tar.gz"
     printf '%-24s %-44s %s\n' "libArcus" "$LIBARCUS_REF" "https://github.com/Ultimaker/libArcus/archive/${LIBARCUS_REF}.tar.gz"
     printf '%-24s %-44s %s\n' "pyArcus" "$PYARCUS_REF" "https://github.com/Ultimaker/pyArcus/archive/${PYARCUS_REF}.tar.gz"
+    printf '%-24s %-44s %s\n' "libSavitar" "$LIBSAVITAR_REF" "https://github.com/Ultimaker/libSavitar/archive/${LIBSAVITAR_REF}.tar.gz"
+    printf '%-24s %-44s %s\n' "pySavitar" "$PYSAVITAR_REF" "https://github.com/Ultimaker/pySavitar/archive/${PYSAVITAR_REF}.tar.gz"
+    printf '%-24s %-44s %s\n' "dulcificum" "$DULCIFICUM_REF" "https://github.com/Ultimaker/synsepalum-dulcificum/archive/${DULCIFICUM_REF}.tar.gz"
+    printf '%-24s %-44s %s\n' "ctre" "$CTRE_REF" "https://github.com/hanickadot/compile-time-regular-expressions/archive/${CTRE_REF}.tar.gz"
     printf '%-24s %-44s %s\n' "pynest2d" "$PYNEST2D_REF" "https://github.com/Ultimaker/pynest2d/archive/${PYNEST2D_REF}.tar.gz"
     printf '%-24s %-44s %s\n' "libnest2d" "$LIBNEST2D_REF" "https://github.com/Ultimaker/libnest2d/archive/${LIBNEST2D_REF}.tar.gz"
     printf '%-24s %-44s %s\n' "libUvula" "$LIBUVULA_REF" "https://github.com/Ultimaker/libUvula/archive/${LIBUVULA_REF}.tar.gz"
@@ -89,7 +95,7 @@ Choose the tarball for your architecture:
 EOF
 for arch in $ARCHS; do
     printf '| %s | %s | `cura-%s-linux-%s.tar.gz` |\n' \
-        "$arch" "$(platform_for "$arch")" "$RELEASE_TAG" "$arch" >> "$notes"
+        "$arch" "$(platform_for "$arch")" "$BUILD_ID" "$arch" >> "$notes"
 done
 cat >> "$notes" <<EOF
 
@@ -104,7 +110,7 @@ Install the Alpine runtime dependencies first:
 apk add python3 py3-qt6 py3-numpy py3-scipy py3-cryptography \\
     py3-pyclipper py3-zeroconf py3-pyserial py3-requests py3-keyring \\
     py3-networkx libstdc++ \\
-    protobuf onetbb libpng clipper nlopt spdlog fmt boost-libs \\
+    protobuf onetbb libpng clipper nlopt spdlog fmt boost-libs pugixml \\
     qt6-qtbase qt6-qtdeclarative qt6-qtsvg qt6-qt5compat \\
     qt6-qtimageformats qt6-qttranslations \\
     mesa-dri-gallium mesa-gl \\
@@ -115,8 +121,8 @@ apk add python3 py3-qt6 py3-numpy py3-scipy py3-cryptography \\
 Then extract the matching tarball and run Cura. For example, on \`x86_64\`:
 
 \`\`\`sh
-sha256sum -c cura-${RELEASE_TAG}-linux-x86_64.tar.gz.sha256
-sudo tar -xzf cura-${RELEASE_TAG}-linux-x86_64.tar.gz -C /
+sha256sum -c cura-${BUILD_ID}-linux-x86_64.tar.gz.sha256
+sudo tar -xzf cura-${BUILD_ID}-linux-x86_64.tar.gz -C /
 cura
 \`\`\`
 
@@ -132,6 +138,10 @@ Substitute your architecture's file name from the table above.
 | fdm-materials | ${FDM_MATERIALS_REF} |
 | libArcus | ${LIBARCUS_VERSION} (\`${LIBARCUS_REF}\`) |
 | pyArcus | \`${PYARCUS_REF}\` |
+| libSavitar | ${LIBSAVITAR_VERSION} (\`${LIBSAVITAR_REF}\`) |
+| pySavitar | ${PYSAVITAR_VERSION} (\`${PYSAVITAR_REF}\`) |
+| dulcificum / pyDulcificum | ${DULCIFICUM_VERSION} (\`${DULCIFICUM_REF}\`) |
+| ctre | \`${CTRE_REF}\` |
 | pynest2d | \`${PYNEST2D_REF}\` |
 | libnest2d | \`${LIBNEST2D_REF}\` |
 | libUvula / pyUvula | ${LIBUVULA_VERSION} (\`${LIBUVULA_REF}\`) |
@@ -143,12 +153,15 @@ Substitute your architecture's file name from the table above.
 | wagyu | \`${WAGYU_REF}\` |
 | Alpine | ${ALPINE_VERSION} (${ALPINE_BRANCH}), APKINDEX ${APKINDEX_HASH} |
 
-The exact source archives are listed in \`SOURCES-${RELEASE_TAG}.txt\`.
+The exact source archives are listed in \`SOURCES-${BUILD_ID}.txt\`.
 
 ## Licensing
 
 Cura and Uranium are LGPL-3.0-or-later; CuraEngine is AGPL-3.0-or-later;
-libUvula is LGPL-3.0 with an MIT-licensed xatlas component. License texts are in
+libUvula is LGPL-3.0 with an MIT-licensed xatlas component. libSavitar and
+pySavitar are LGPL-3.0. Trimesh is MIT, ctre is Apache-2.0.
+Dulcificum does not declare a license in its repository; its
+source is listed above. License texts are in
 \`/usr/share/licenses/cura-alpine/\`. This is an unofficial build, not endorsed
 by UltiMaker. Cura uses the GPL-licensed PyQt6 runtime installed by the user.
 
